@@ -2,6 +2,9 @@ from flask import Flask, request, jsonify
 import cloudscraper
 from bs4 import BeautifulSoup
 
+# Flask app (only needed for Render deployment)
+app = Flask(__name__)
+
 # Book title to search for
 book_name = "The Dark Lady’s Guide to Villainy"
 
@@ -32,42 +35,61 @@ USER_AGENTS = [
     "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:110.0) Gecko/20100101 Firefox/110.0"
 ]
 
-# Initialize Cloudscraper
-scraper = cloudscraper.create_scraper()
+# Initialize Cloudscraper with Cloudflare Challenge Mode
+scraper = cloudscraper.create_scraper(browser={'browser': 'firefox', 'platform': 'windows', 'desktop': True})
 
-# Check each tag's Rising Stars page
-for tag in tags:
-    url = f"{base_url}{tag}"
-    try:
-        print(f"Checking {tag}...")
+# Function to check Rising Stars rankings
+def check_rising_stars():
+    results = {}
 
-        headers = {
-            "User-Agent": USER_AGENTS[0]  # Using the first User-Agent from the list
-        }
+    for tag in tags:
+        url = f"{base_url}{tag}"
+        try:
+            print(f"Checking {tag}...")
 
-        # Request the Rising Stars page with Cloudscraper
-        response = scraper.get(url, headers=headers, timeout=10)
-        response.raise_for_status()
-        
-        # Debugging: Print first 500 characters of HTML response
-        print(f"HTML response for {tag}: {response.text[:500]}")
-        
-        # Parse the HTML
-        soup = BeautifulSoup(response.text, "html.parser")
+            headers = {
+                "User-Agent": USER_AGENTS[0]  # Using the first User-Agent from the list
+            }
 
-        # Find all highlighted book titles on the Rising Stars list
-        titles = [a.text.strip() for a in soup.find_all('a', class_='font-red-sunglo bold')]
+            # Request the Rising Stars page with Cloudscraper
+            response = scraper.get(url, headers=headers, timeout=10)
+            response.raise_for_status()
 
-        # Check if the book is present and find its ranking position
-        if book_name in titles:
-            position = titles.index(book_name) + 1  # Convert index to human-readable position
-            print(f"✅ Found '{book_name}' in '{tag}' Rising Stars list at position #{position}.")
-        else:
-            print(f"❌ '{book_name}' not found in '{tag}' Rising Stars list.")
+            # Debugging: Print first 500 characters of HTML response
+            print(f"HTML response for {tag}:\n{response.text[:500]}\n")
 
-    except Exception as e:
-        print(f"⚠️ Failed to check '{tag}': {e}")
+            # Parse the HTML
+            soup = BeautifulSoup(response.text, "html.parser")
 
-print("\nCheck complete.")
+            # Find all highlighted book titles on the Rising Stars list
+            titles = [a.text.strip() for a in soup.find_all('a', class_='font-red-sunglo bold')]
 
+            # Normalize extracted titles (lowercase, stripped)
+            normalized_titles = [t.lower().strip() for t in titles]
 
+            # Normalize book name for comparison
+            normalized_book_name = book_name.lower().strip()
+
+            if normalized_book_name in normalized_titles:
+                position = normalized_titles.index(normalized_book_name) + 1
+                results[tag] = f"✅ Found in position #{position}"
+                print(f"✅ Found '{book_name}' in '{tag}' Rising Stars list at position #{position}.")
+            else:
+                results[tag] = "❌ Not found in this category"
+                print(f"❌ '{book_name}' not found in '{tag}' Rising Stars list.")
+
+        except Exception as e:
+            results[tag] = f"⚠️ Failed to check: {e}"
+            print(f"⚠️ Failed to check '{tag}': {e}")
+
+    return results
+
+# Flask route for API calls
+@app.route('/check_rising_stars', methods=['GET'])
+def api_rising_stars():
+    results = check_rising_stars()
+    return jsonify(results)
+
+# Run the Flask app (only needed for Render deployment)
+if __name__ == '__main__':
+    app.run(host="0.0.0.0", port=10000, debug=True)
