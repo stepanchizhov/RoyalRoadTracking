@@ -1,9 +1,11 @@
 from flask import Flask, request, jsonify
+from flask_cors import CORS  # ✅ Added to enable cross-origin requests
 import cloudscraper
 from bs4 import BeautifulSoup
 import re
 
 app = Flask(__name__)
+CORS(app)  # ✅ Enables CORS for all routes (fixes "Failed to Fetch" on WordPress)
 
 # Base URL for Rising Stars
 BASE_URL = "https://www.royalroad.com/fictions/rising-stars?genre="
