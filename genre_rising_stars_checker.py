@@ -5,7 +5,7 @@ from bs4 import BeautifulSoup
 import re
 
 app = Flask(__name__)
-CORS(app)  # ✅ Enables CORS for all routes (fixes "Failed to Fetch" on WordPress)
+CORS(app, resources={r"/*": {"origins": "*"}})  # ✅ Enables CORS for all routes (fixes "Failed to Fetch" on WordPress)
 
 # Base URL for Rising Stars
 BASE_URL = "https://www.royalroad.com/fictions/rising-stars?genre="
