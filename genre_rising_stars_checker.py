@@ -48,7 +48,10 @@ for tag in tags:
         # Request the Rising Stars page with Cloudscraper
         response = scraper.get(url, headers=headers, timeout=10)
         response.raise_for_status()
-
+        
+        # Debugging: Print first 500 characters of HTML response
+        print(f"HTML response for {tag}: {response.text[:500]}")
+        
         # Parse the HTML
         soup = BeautifulSoup(response.text, "html.parser")
 
