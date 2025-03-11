@@ -34,7 +34,9 @@ for tag in tags:
     url = f"{base_url}{tag}"
     try:
         print(f"Checking {tag}...")
-        response = requests.get(url, headers=headers, timeout=10)
+        response = requests.get(url, headers=HEADERS, timeout=10)
+        print(f"HTML response for {tag}: {response.text[:500]}")  # Print first 500 characters
+
         response.raise_for_status()
         soup = BeautifulSoup(response.text, "html.parser")
         
