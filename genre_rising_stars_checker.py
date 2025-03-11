@@ -1,8 +1,11 @@
 from flask import Flask, request, jsonify
+from flask_cors import CORS  # ✅ Enable cross-origin requests for WordPress
 import cloudscraper
 from bs4 import BeautifulSoup
+import re
 
 app = Flask(__name__)
+CORS(app, resources={r"/*": {"origins": "*"}})  # ✅ Fixes "Failed to Fetch" on WordPress
 
 # User-Agent rotation to avoid bot detection
 USER_AGENTS = [
@@ -17,10 +20,15 @@ MAIN_RISING_STARS_URL = "https://www.royalroad.com/fictions/rising-stars"
 GENRE_RISING_STARS_URL = "https://www.royalroad.com/fictions/rising-stars?genre="
 
 # Initialize Cloudscraper
-scraper = cloudscraper.create_scraper()
+scraper = cloudscraper.create_scraper(browser={'browser': 'firefox', 'platform': 'windows', 'desktop': True})
+
+def extract_book_id(book_url):
+    """Extracts the book ID from a Royal Road book URL."""
+    match = re.search(r'/fiction/(\d+)/', book_url)
+    return match.group(1) if match else None
 
 def get_tags_and_id(book_url):
-    """Extracts tags and book ID from a Royal Road book page."""
+    """Extracts book ID and tags from a Royal Road book page."""
     try:
         headers = {"User-Agent": USER_AGENTS[0]}
         response = scraper.get(book_url, headers=headers, timeout=10)
@@ -28,7 +36,7 @@ def get_tags_and_id(book_url):
         soup = BeautifulSoup(response.text, "html.parser")
 
         # Extract book ID from URL
-        book_id = book_url.split("/")[-2]  # Extracts '105229' from the URL
+        book_id = extract_book_id(book_url)
 
         # Extract tags from the book's page
         tags = []
@@ -47,7 +55,7 @@ def check_rising_stars(book_id, tags):
     """Checks if the book appears in the main and genre-specific Rising Stars lists."""
     results = {}
 
-    # Check the main Rising Stars list first
+    # Check the Main Rising Stars list first
     try:
         headers = {"User-Agent": USER_AGENTS[0]}
         response = scraper.get(MAIN_RISING_STARS_URL, headers=headers, timeout=10)
@@ -55,11 +63,11 @@ def check_rising_stars(book_id, tags):
         soup = BeautifulSoup(response.text, "html.parser")
 
         # Find all book links in the main Rising Stars list
-        titles = [a["href"].split("/")[2] for a in soup.find_all("a", class_="font-red-sunglo bold")]
+        book_ids = [a["href"].split("/")[2] for a in soup.find_all("a", class_="font-red-sunglo bold")]
 
         # Check if the book is present
-        if book_id in titles:
-            position = titles.index(book_id) + 1
+        if book_id in book_ids:
+            position = book_ids.index(book_id) + 1
             results["Main Rising Stars"] = f"✅ Found in position #{position}"
         else:
             results["Main Rising Stars"] = "❌ Not found in Main Rising Stars list"
@@ -76,11 +84,11 @@ def check_rising_stars(book_id, tags):
             soup = BeautifulSoup(response.text, "html.parser")
 
             # Find all book links in the genre's Rising Stars list
-            titles = [a["href"].split("/")[2] for a in soup.find_all("a", class_="font-red-sunglo bold")]
+            book_ids = [a["href"].split("/")[2] for a in soup.find_all("a", class_="font-red-sunglo bold")]
 
             # Check if the book is present
-            if book_id in titles:
-                position = titles.index(book_id) + 1
+            if book_id in book_ids:
+                position = book_ids.index(book_id) + 1
                 results[tag] = f"✅ Found in position #{position}"
             else:
                 results[tag] = f"❌ Not found in '{tag}' Rising Stars list"
@@ -108,4 +116,6 @@ def api_rising_stars():
         return jsonify({"error": "Failed to retrieve book details"}), 500
 
 if __name__ == '__main__':
-    app.run(host="0.0.0.0", port=10000, debug=True)
+    import os
+    PORT = int(os.environ.get("PORT", 10000))  # ✅ Uses PORT=10000 (fixes Render deployment issues)
+    app.run(host="0.0.0.0", port=PORT, debug=True)
