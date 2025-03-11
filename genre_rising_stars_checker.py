@@ -1,95 +1,87 @@
 from flask import Flask, request, jsonify
 import cloudscraper
 from bs4 import BeautifulSoup
+import re
 
-# Flask app (only needed for Render deployment)
 app = Flask(__name__)
 
-# Book title to search for
-book_name = "The Dark Lady’s Guide to Villainy"
-
-# Tags to check
-tags = [
-    "ruling_class",
-    "comedy",
-    "female_lead",
-    "adventure",
-    "fantasy",
-    "romance",
-    "attractive_lead",
-    "gender_bender",
-    "high_fantasy",
-    "low_fantasy",
-    "magic",
-    "school_life"
-]
-
-# Base URL
-base_url = "https://www.royalroad.com/fictions/rising-stars?genre="
-
-# User-Agent rotation to avoid bot detection
-USER_AGENTS = [
-    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36",
-    "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.0.0 Safari/537.36",
-    "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-    "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:110.0) Gecko/20100101 Firefox/110.0"
-]
+# Base URL for Rising Stars
+BASE_URL = "https://www.royalroad.com/fictions/rising-stars?genre="
 
 # Initialize Cloudscraper with Cloudflare Challenge Mode
 scraper = cloudscraper.create_scraper(browser={'browser': 'firefox', 'platform': 'windows', 'desktop': True})
 
-# Function to check Rising Stars rankings
-def check_rising_stars():
+def extract_book_id(book_url):
+    """Extracts the book ID from a Royal Road book URL."""
+    match = re.search(r'/fiction/(\d+)/', book_url)
+    return match.group(1) if match else None
+
+def get_tags_from_book(url):
+    """Extracts tags from a Royal Road book page."""
+    try:
+        response = scraper.get(url, timeout=10)
+        response.raise_for_status()
+        soup = BeautifulSoup(response.text, "html.parser")
+
+        # Extract tags from the book's page
+        tags = []
+        for tag in soup.find_all("a", class_="fiction-tag"):
+            tag_url = tag["href"]
+            if "tagsAdd=" in tag_url:
+                tag_name = tag_url.split("tagsAdd=")[-1]
+                tags.append(tag_name)
+
+        return tags
+
+    except Exception as e:
+        return None
+
+def check_rising_stars(book_id, tags):
+    """Checks if the book is listed in Rising Stars under relevant tags using book ID."""
     results = {}
 
     for tag in tags:
-        url = f"{base_url}{tag}"
+        url = f"{BASE_URL}{tag}"
         try:
-            print(f"Checking {tag}...")
-
-            headers = {
-                "User-Agent": USER_AGENTS[0]  # Using the first User-Agent from the list
-            }
-
-            # Request the Rising Stars page with Cloudscraper
-            response = scraper.get(url, headers=headers, timeout=10)
+            response = scraper.get(url, timeout=10)
             response.raise_for_status()
-
-            # Debugging: Print first 500 characters of HTML response
-            print(f"HTML response for {tag}:\n{response.text[:500]}\n")
-
-            # Parse the HTML
             soup = BeautifulSoup(response.text, "html.parser")
 
-            # Find all highlighted book titles on the Rising Stars list
-            titles = [a.text.strip() for a in soup.find_all('a', class_='font-red-sunglo bold')]
+            # Find all book links on the Rising Stars list
+            book_links = [a["href"] for a in soup.find_all('a', class_='font-red-sunglo bold', href=True)]
 
-            # Normalize extracted titles (lowercase, stripped)
-            normalized_titles = [t.lower().strip() for t in titles]
-
-            # Normalize book name for comparison
-            normalized_book_name = book_name.lower().strip()
-
-            if normalized_book_name in normalized_titles:
-                position = normalized_titles.index(normalized_book_name) + 1
+            # Check if the book ID is present in the list
+            if any(f"/fiction/{book_id}/" in link for link in book_links):
+                position = next(i + 1 for i, link in enumerate(book_links) if f"/fiction/{book_id}/" in link)
                 results[tag] = f"✅ Found in position #{position}"
-                print(f"✅ Found '{book_name}' in '{tag}' Rising Stars list at position #{position}.")
             else:
                 results[tag] = "❌ Not found in this category"
-                print(f"❌ '{book_name}' not found in '{tag}' Rising Stars list.")
 
         except Exception as e:
             results[tag] = f"⚠️ Failed to check: {e}"
-            print(f"⚠️ Failed to check '{tag}': {e}")
 
     return results
 
-# Flask route for API calls
 @app.route('/check_rising_stars', methods=['GET'])
 def api_rising_stars():
-    results = check_rising_stars()
-    return jsonify(results)
+    book_url = request.args.get("book_url")
 
-# Run the Flask app (only needed for Render deployment)
+    # Validate the URL
+    if not book_url or "royalroad.com" not in book_url:
+        return jsonify({"error": "Invalid Royal Road URL"}), 400
+
+    # Extract the book ID
+    book_id = extract_book_id(book_url)
+    if not book_id:
+        return jsonify({"error": "Invalid book ID"}), 400
+
+    # Fetch book tags
+    tags = get_tags_from_book(book_url)
+    if tags:
+        results = check_rising_stars(book_id, tags)
+        return jsonify(results)
+    else:
+        return jsonify({"error": "Failed to retrieve book details"}), 500
+
 if __name__ == '__main__':
-    app.run(host="0.0.0.0", port=10000, debug=True)
+    app.run(host="0.0.0.0", port=5000, debug=True)
