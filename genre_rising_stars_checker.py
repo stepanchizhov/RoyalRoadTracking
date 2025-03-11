@@ -49,6 +49,8 @@ def check_rising_stars(book_name, tags):
 
             # Find all highlighted book titles on the Rising Stars list
             titles = [a.text.strip() for a in soup.find_all('a', class_='font-red-sunglo bold')]
+            print(f"Extracted Titles for {tag}: {titles}")  # Debugging
+
 
             # Check if the book is present and find its ranking position
             if book_name in titles:
