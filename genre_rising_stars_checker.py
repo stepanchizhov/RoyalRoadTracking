@@ -86,4 +86,6 @@ def api_rising_stars():
         return jsonify({"error": "Failed to retrieve book details"}), 500
 
 if __name__ == '__main__':
-    app.run(host="0.0.0.0", port=5000, debug=True)
+    import os
+    PORT = int(os.environ.get("PORT", 5000))  # Default to 5000 if no port is set
+    app.run(host="0.0.0.0", port=PORT, debug=True)
