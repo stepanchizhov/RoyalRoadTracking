@@ -1,48 +1,86 @@
-import time
-from flask import Flask, request, jsonify
-import requests
-from bs4 import BeautifulSoup
+document.addEventListener("DOMContentLoaded", function() {
+    document.getElementById("risingStarsForm").addEventListener("submit", function(event) {
+        event.preventDefault();
 
-app = Flask(__name__)
+        let bookUrl = document.getElementById("book_url").value;
+        let apiUrl = "https://royalroadtracking.onrender.com/check_rising_stars";  
+        let baseRisingStarsUrl = "https://www.royalroad.com/fictions/rising-stars?genre=";  
 
-HEADERS = {
-    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36"
-}
+        // Extract the book's Royal Road ID from the URL
+        let bookIdMatch = bookUrl.match(/fiction\/(\d+)/);
+        let bookId = bookIdMatch ? bookIdMatch[1] : null;
 
-BASE_URL = "https://www.royalroad.com/fictions/rising-stars?genre="
+        // Show fetching animation & hide previous results
+        document.getElementById("fetchingData").style.display = "block";
+        document.getElementById("risingStarsResults").style.display = "none";
+        document.getElementById("copyResults").style.display = "none";
+        document.getElementById("risingStarsResults").innerHTML = "";
 
-def get_tags_from_book(url):
-    """Extracts tags from a Royal Road book page."""
-    try:
-        response = requests.get(url, headers=HEADERS, timeout=10)
-        response.raise_for_status()
-        soup = BeautifulSoup(response.text, "html.parser")
+        fetch(apiUrl + "?book_url=" + encodeURIComponent(bookUrl))
+        .then(response => {
+            if (!response.ok) {
+                throw new Error(`HTTP Error! Status: ${response.status}`);
+            }
+            return response.json();
+        })
+        .then(data => {
+            document.getElementById("fetchingData").style.display = "none"; 
+            document.getElementById("risingStarsResults").style.display = "block";
+            document.getElementById("copyResults").style.display = "block";
 
-        # Extract book ID from URL
-        book_id = url.split("/")[-2]  # Get the numerical book ID from URL
+            let resultHTML = "<h3>Results:</h3><ul>";
+            for (const [tag, status] of Object.entries(data)) {
+                let tagUrl = baseRisingStarsUrl + encodeURIComponent(tag);
+                
+                if (bookId) {
+                    tagUrl += `#fiction-${bookId}`;  // Append the book's unique ID as an anchor
+                }
 
-        # Extract tags from the book's page
-        tags = [tag["href"].split("tagsAdd=")[-1] for tag in soup.find_all("a", class_="fiction-tag")]
+                let resultText = status;
 
-        return book_id, tags
+                if (status.includes("✅ Found in position #")) {
+                    let position = status.match(/#(\d+)/)[1];  
+                    resultText = `✅ <a href="${tagUrl}" target="_blank" style="color: #0073e6; text-decoration: none;">Found in position #${position}</a>`;
+                }
 
-    except requests.RequestException as e:
-        return None, None
+                resultHTML += `<li><strong>${tag}:</strong> <span id="tag-${tag}">Processing...</span></li>`;
+            }
+            resultHTML += "</ul>";
+            document.getElementById("risingStarsResults").innerHTML = resultHTML;
 
-def check_rising_stars(book_id, tags):
-    """Checks if the book is listed in Rising Stars under relevant tags with a 5-second delay."""
-    results = {}
+            // **Display results one by one with a 3-second delay**
+            let index = 0;
+            for (const [tag, status] of Object.entries(data)) {
+                setTimeout(() => {
+                    let tagUrl = baseRisingStarsUrl + encodeURIComponent(tag);
+                    
+                    if (bookId) {
+                        tagUrl += `#fiction-${bookId}`; // Add the book's ID
+                    }
 
-    for tag in tags:
-        url = f"{BASE_URL}{tag}"
-        try:
-            response = requests.get(url, headers=HEADERS, timeout=10)
-            response.raise_for_status()
-            soup = BeautifulSoup(response.text, "html.parser")
+                    let resultText = status;
 
-            # Find all highlighted book IDs in the Rising Stars list
-            titles = [a["href"].split("/")[2] for a in soup.find_all('a', class_='font-red-sunglo bold')]
+                    if (status.includes("✅ Found in position #")) {
+                        let position = status.match(/#(\d+)/)[1];  
+                        resultText = `✅ Found in <a href="${tagUrl}" target="_blank" style="color: #0073e6; text-decoration: none;">position #${position}</a>`;
+                    }
 
-            # Check if the book is present and find its ranking position
-            if book_id in titles:
-                position = titles.index(book_id) + 1
+                    document.getElementById(`tag-${tag}`).innerHTML = resultText;
+                }, 1500 * index);
+                index++;
+            }
+        })
+        .catch(error => {
+            document.getElementById("fetchingData").style.display = "none"; 
+            document.getElementById("risingStarsResults").style.display = "block";
+            document.getElementById("risingStarsResults").innerHTML = `<p style="color:red;">Error fetching results: ${error}</p>`;
+        });
+    });
+
+    // Copy results function
+    document.getElementById("copyResults").addEventListener("click", function() {
+        let text = document.getElementById("risingStarsResults").innerText;
+        navigator.clipboard.writeText(text);
+        alert("Copied to clipboard! 📋");
+    });
+});
