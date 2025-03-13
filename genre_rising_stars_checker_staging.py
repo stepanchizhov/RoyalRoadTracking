@@ -152,16 +152,16 @@ def api_rising_stars():
 
     if not book_url or "royalroad.com" not in book_url:
         logging.error("❌ Invalid Royal Road URL")
-        return jsonify({"error": "Invalid Royal Road URL"}), 400
+        return jsonify({"error": "Invalid Royal Road URL", "results": {}}), 400  # Ensures results is always present
 
     title, book_id, tags = get_title_and_tags(book_url)
 
     if book_id and tags:
         results = check_rising_stars(book_id, tags)
-        return jsonify({"title": title, "results": results})
+        return jsonify({"title": title, "results": results if results else {}})  # Always return a dictionary
     else:
         logging.error("❌ Failed to retrieve book details")
-        return jsonify({"error": "Failed to retrieve book details"}), 500
+        return jsonify({"error": "Failed to retrieve book details", "results": {}}), 500  # Ensures results is always present
 
 
 if __name__ == '__main__':
