@@ -108,16 +108,23 @@ async def api_rising_stars():
 
     # Validate the URL
     if not book_url or "royalroad.com" not in book_url:
-        return jsonify({"error": "Invalid Royal Road URL"}), 400
+        return jsonify({"error": "Invalid Royal Road URL provided."}), 400
 
-    # Fetch book ID and tags
-    book_id, tags = await get_tags_and_id(book_url)
+    try:
+        # Fetch book ID and tags
+        book_id, tags = await get_tags_and_id(book_url)
 
-    if book_id and tags:
+        if not book_id:
+            return jsonify({"error": "Failed to extract book ID from the provided URL."}), 400
+
+        if not tags:
+            return jsonify({"error": "Failed to retrieve tags for this book."}), 400
+
         results = await check_rising_stars(book_id, tags)
         return jsonify(results)
-    else:
-        return jsonify({"error": "Failed to retrieve book details"}), 500
+
+    except Exception as e:
+        return jsonify({"error": f"Unexpected server error: {str(e)}"}), 500
 
 
 if __name__ == '__main__':
