@@ -49,30 +49,32 @@ def get_title_and_tags(book_url):
 
         soup = BeautifulSoup(response.text, "html.parser")
 
-        # Attempt 1: Extract title from <h2 class="fiction-title">
-        title_tag = soup.find("h2", class_="fiction-title")
-        if title_tag and title_tag.a:
-            title = title_tag.a.text.strip()
-        else:
-            # Attempt 2: Extract title from <figure> alt attribute
-            figure_tag = soup.find("figure", class_="col-sm-2")
-            if figure_tag:
-                img_tag = figure_tag.find("img", class_="img-responsive")
-                if img_tag and img_tag.has_attr("alt"):
-                    title = img_tag["alt"].strip()
-                else:
-                    title = "Unknown Title"
-            else:
-                title = "Unknown Title"
-
         # Extract book ID
         book_id = extract_book_id(book_url)
         if not book_id:
             logging.error("❌ Failed to extract book ID from URL")
-            return title, None, []
+            return "Unknown Title", None, []
 
         # Extract tags from the book's page
         tags = [tag["href"].split("tagsAdd=")[-1] for tag in soup.find_all("a", class_="fiction-tag") if "tagsAdd=" in tag["href"]]
+
+        # Fetch the book's **own** page using the book ID
+        book_page_url = f"https://www.royalroad.com/fiction/{book_id}/"
+        logging.info(f"Fetching book's main page: {book_page_url}")
+
+        book_response = scraper.get(book_page_url, headers=headers, timeout=10)
+        if book_response.status_code != 200:
+            logging.error(f"❌ Failed to fetch book's main page, Status Code: {book_response.status_code}")
+            title = "Unknown Title"
+        else:
+            book_soup = BeautifulSoup(book_response.text, "html.parser")
+            title_tag = book_soup.find("title")
+            if title_tag:
+                title = title_tag.text.strip()
+                title = title.replace(" | Royal Road", "")  # Remove extra branding
+                title = re.sub(r'&#\d+;', '', title)  # Remove HTML entities if needed
+            else:
+                title = "Unknown Title"
 
         logging.info(f"✅ Extracted Book Title: {title}, ID: {book_id}, Tags: {tags}")
         return title, book_id, tags
