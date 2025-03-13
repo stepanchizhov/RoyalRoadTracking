@@ -58,7 +58,7 @@ def get_book_details(book_url):
         # Extract categories (broad classifications)
         categories = [cat.text.strip() for cat in soup.find_all("span", class_="label")]
 
-        # Extract specific tags
+        # Extract specific tags (used in Rising Stars URL)
         tags = []
         for tag in soup.find_all("a", class_="fiction-tag"):
             tag_url = tag["href"]
@@ -100,7 +100,7 @@ def check_rising_stars(book_id, tags):
         logging.exception("⚠️ Failed to check Main Rising Stars")
         results["Main Rising Stars"] = f"⚠️ Failed to check: {e}"
 
-    # Check each genre's Rising Stars page
+    # Check each **tag-based** Rising Stars page (not category-based)
     for tag in tags:
         url = f"{GENRE_RISING_STARS_URL}{tag}"
         try:
@@ -139,7 +139,12 @@ def api_rising_stars():
 
     if book_id and tags:
         results = check_rising_stars(book_id, tags)
-        return jsonify({"book_title": book_title, "categories": categories, "tags": tags, "results": results})
+        return jsonify({
+            "book_title": book_title,
+            "categories": categories,  # Included for informational purposes
+            "tags": tags,  # Used for Rising Stars URL
+            "results": results
+        })
     else:
         logging.error("❌ Failed to retrieve book details")
         return jsonify({"error": "Failed to retrieve book details"}), 500
