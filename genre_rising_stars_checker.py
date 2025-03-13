@@ -1,10 +1,10 @@
 from flask import Flask, request, jsonify
 from flask_cors import CORS  # ✅ Enable cross-origin requests for WordPress
-import aiohttp
-import asyncio
+import cloudscraper
 from bs4 import BeautifulSoup
 import re
-import random
+import asyncio
+import aiohttp
 
 app = Flask(__name__)
 CORS(app, resources={r"/*": {"origins": "*"}})  # ✅ Fixes "Failed to Fetch" on WordPress
@@ -21,56 +21,53 @@ USER_AGENTS = [
 MAIN_RISING_STARS_URL = "https://www.royalroad.com/fictions/rising-stars"
 GENRE_RISING_STARS_URL = "https://www.royalroad.com/fictions/rising-stars?genre="
 
-
-async def fetch_page(session, url):
-    """Asynchronously fetches a webpage and returns the parsed HTML."""
-    headers = {"User-Agent": random.choice(USER_AGENTS)}
-    
-    try:
-        async with session.get(url, headers=headers, timeout=15) as response:
-            response.raise_for_status()
-            return await response.text()
-    except Exception as e:
-        print(f"⚠️ Failed to fetch {url}: {e}")
-        return None
-
+# Initialize Cloudscraper
+scraper = cloudscraper.create_scraper(browser={'browser': 'firefox', 'platform': 'windows', 'desktop': True})
 
 def extract_book_id(book_url):
     """Extracts the book ID from a Royal Road book URL."""
     match = re.search(r'/fiction/(\d+)/', book_url)
     return match.group(1) if match else None
 
+async def fetch_page(session, url):
+    """Fetches a webpage asynchronously."""
+    try:
+        headers = {"User-Agent": USER_AGENTS[0]}
+        async with session.get(url, headers=headers, timeout=10) as response:
+            return await response.text()
+    except Exception as e:
+        return str(e)
 
 async def get_tags_and_id(book_url):
-    """Asynchronously extracts book ID and tags from a Royal Road book page."""
-    async with aiohttp.ClientSession() as session:
-        html = await fetch_page(session, book_url)
-        if not html:
-            return None, None
-
-        soup = BeautifulSoup(html, "html.parser")
+    """Extracts book ID and tags from a Royal Road book page."""
+    try:
         book_id = extract_book_id(book_url)
+        async with aiohttp.ClientSession() as session:
+            page_content = await fetch_page(session, book_url)
+            soup = BeautifulSoup(page_content, "html.parser")
 
-        # Extract tags
-        tags = []
-        for tag in soup.find_all("a", class_="fiction-tag"):
-            tag_url = tag["href"]
-            if "tagsAdd=" in tag_url:
-                tag_name = tag_url.split("tagsAdd=")[-1]
-                tags.append(tag_name)
+            tags = []
+            for tag in soup.find_all("a", class_="fiction-tag"):
+                tag_url = tag["href"]
+                if "tagsAdd=" in tag_url:
+                    tag_name = tag_url.split("tagsAdd=")[-1]
+                    tags.append(tag_name)
 
-        return book_id, tags
+            return book_id, tags
 
+    except Exception as e:
+        return None, None
 
 async def check_rising_stars(book_id, tags):
-    """Asynchronously checks if the book appears in the main and genre-specific Rising Stars lists."""
+    """Checks if the book appears in the main and genre-specific Rising Stars lists."""
     results = {}
 
-    async with aiohttp.ClientSession() as session:
-        # Check the Main Rising Stars list first
-        html = await fetch_page(session, MAIN_RISING_STARS_URL)
-        if html:
-            soup = BeautifulSoup(html, "html.parser")
+    # Check the Main Rising Stars list first
+    try:
+        async with aiohttp.ClientSession() as session:
+            main_page_content = await fetch_page(session, MAIN_RISING_STARS_URL)
+            soup = BeautifulSoup(main_page_content, "html.parser")
+
             book_ids = [a["href"].split("/")[2] for a in soup.find_all("a", class_="font-red-sunglo bold")]
 
             if book_id in book_ids:
@@ -78,17 +75,18 @@ async def check_rising_stars(book_id, tags):
                 results["Main Rising Stars"] = f"✅ Found in position #{position}"
             else:
                 results["Main Rising Stars"] = "❌ Not found in Main Rising Stars list"
-        else:
-            results["Main Rising Stars"] = "⚠️ Failed to fetch Main Rising Stars list"
 
-        # Check each genre's Rising Stars page
+    except Exception as e:
+        results["Main Rising Stars"] = f"⚠️ Failed to check: {e}"
+
+    # Check each genre's Rising Stars page
+    async with aiohttp.ClientSession() as session:
         for tag in tags:
-            await asyncio.sleep(5)  # ✅ Delay to avoid rate-limiting
-
             url = f"{GENRE_RISING_STARS_URL}{tag}"
-            html = await fetch_page(session, url)
-            if html:
-                soup = BeautifulSoup(html, "html.parser")
+            try:
+                genre_page_content = await fetch_page(session, url)
+                soup = BeautifulSoup(genre_page_content, "html.parser")
+
                 book_ids = [a["href"].split("/")[2] for a in soup.find_all("a", class_="font-red-sunglo bold")]
 
                 if book_id in book_ids:
@@ -96,42 +94,28 @@ async def check_rising_stars(book_id, tags):
                     results[tag] = f"✅ Found in position #{position}"
                 else:
                     results[tag] = f"❌ Not found in '{tag}' Rising Stars list"
-            else:
-                results[tag] = f"⚠️ Failed to fetch '{tag}' Rising Stars list"
+
+            except Exception as e:
+                results[tag] = f"⚠️ Failed to check: {e}"
 
     return results
-
 
 @app.route('/check_rising_stars', methods=['GET'])
 async def api_rising_stars():
     book_url = request.args.get("book_url")
 
-    # Validate the URL
     if not book_url or "royalroad.com" not in book_url:
-        return jsonify({"error": "Invalid Royal Road URL provided."}), 400
+        return jsonify({"error": "Invalid Royal Road URL"}), 400
 
-    try:
-        # Fetch book ID and tags
-        book_id, tags = await get_tags_and_id(book_url)
+    book_id, tags = await get_tags_and_id(book_url)
 
-        if not book_id:
-            return jsonify({"error": "Failed to extract book ID from the provided URL."}), 400
-
-        if not tags:
-            return jsonify({"error": "Failed to retrieve tags for this book."}), 400
-
+    if book_id and tags:
         results = await check_rising_stars(book_id, tags)
         return jsonify(results)
-
-    except Exception as e:
-        return jsonify({"error": f"Unexpected server error: {str(e)}"}), 500
-
+    else:
+        return jsonify({"error": "Failed to retrieve book details"}), 500
 
 if __name__ == '__main__':
     import os
-    import uvicorn
-
-    PORT = int(os.environ.get("PORT", 10000))  # ✅ Uses PORT=10000 (fixes Render deployment issues)
-    
-    # ✅ Use ASGI server to support async operations
-    uvicorn.run(app, host="0.0.0.0", port=PORT)
+    PORT = int(os.environ.get("PORT", 10000))
+    app.run(host="0.0.0.0", port=PORT, debug=True)
