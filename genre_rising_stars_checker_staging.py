@@ -49,7 +49,7 @@ def get_title_and_tags(book_url):
 
         soup = BeautifulSoup(response.text, "html.parser")
 
-        # Extract book title
+        # Extract book title from <h2 class="fiction-title">
         title_tag = soup.find("h2", class_="fiction-title")
         title = title_tag.a.text.strip() if title_tag and title_tag.a else "Unknown Title"
 
@@ -59,7 +59,7 @@ def get_title_and_tags(book_url):
             logging.error("❌ Failed to extract book ID from URL")
             return title, None, []
 
-        # Extract tags
+        # Extract tags from the book's page
         tags = [tag["href"].split("tagsAdd=")[-1] for tag in soup.find_all("a", class_="fiction-tag") if "tagsAdd=" in tag["href"]]
 
         logging.info(f"✅ Extracted Book Title: {title}, ID: {book_id}, Tags: {tags}")
@@ -74,7 +74,7 @@ def check_rising_stars(book_id, tags):
     """Checks if the book appears in the main and genre-specific Rising Stars lists."""
     results = {}
 
-    # Check Main Rising Stars list
+    # Check the Main Rising Stars list first
     try:
         headers = {"User-Agent": random.choice(USER_AGENTS)}
         logging.info("Checking Main Rising Stars list...")
@@ -88,8 +88,10 @@ def check_rising_stars(book_id, tags):
         if book_id in book_ids:
             position = book_ids.index(book_id) + 1
             results["Main Rising Stars"] = f"✅ Found in position #{position}"
+            logging.info(f"✅ Book {book_id} found in Main Rising Stars at position {position}")
         else:
             results["Main Rising Stars"] = "❌ Not found in Main Rising Stars list"
+            logging.info(f"❌ Book {book_id} not found in Main Rising Stars")
 
     except Exception as e:
         logging.exception("⚠️ Failed to check Main Rising Stars")
@@ -99,6 +101,7 @@ def check_rising_stars(book_id, tags):
     for tag in tags:
         url = f"{GENRE_RISING_STARS_URL}{tag}"
         try:
+            logging.info(f"Checking Rising Stars for genre: {tag}")
             response = scraper.get(url, headers=headers, timeout=10)
             response.raise_for_status()
 
@@ -108,8 +111,10 @@ def check_rising_stars(book_id, tags):
             if book_id in book_ids:
                 position = book_ids.index(book_id) + 1
                 results[tag] = f"✅ Found in position #{position}"
+                logging.info(f"✅ Book {book_id} found in {tag} at position {position}")
             else:
                 results[tag] = f"❌ Not found in '{tag}' Rising Stars list"
+                logging.info(f"❌ Book {book_id} not found in {tag}")
 
         except Exception as e:
             logging.exception(f"⚠️ Failed to check {tag} Rising Stars")
@@ -126,14 +131,15 @@ def api_rising_stars():
 
     if not book_url or "royalroad.com" not in book_url:
         logging.error("❌ Invalid Royal Road URL")
-        return jsonify({"error": "Invalid Royal Road URL", "results": {}}), 400
+        return jsonify({"error": "Invalid Royal Road URL", "results": {}, "title": "Unknown Title"}), 400
 
     title, book_id, tags = get_title_and_tags(book_url)
 
-    if book_id:
+    if book_id and tags:
         results = check_rising_stars(book_id, tags)
         return jsonify({"title": title, "results": results})
     else:
+        logging.error("❌ Failed to retrieve book details")
         return jsonify({"error": "Failed to retrieve book details", "title": title, "results": {}}), 500
 
 
