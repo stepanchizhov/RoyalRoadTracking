@@ -49,30 +49,25 @@ def get_title_and_tags(book_url):
 
         soup = BeautifulSoup(response.text, "html.parser")
 
-        # Extract book title - Multiple attempts
+        # DEBUG: Print first 500 characters of the response to check if it's valid HTML
+        logging.debug(f"Received HTML (first 500 chars): {response.text[:500]}")
+
+        # Extract book title
         title = None
 
-        # 1st Attempt: Using the expected structure
+        # **Primary Attempt: Extract from <h2 class="fiction-title">**
         title_tag = soup.find("h2", class_="fiction-title")
-        if title_tag and title_tag.a:
-            title = title_tag.a.text.strip()
+        if title_tag:
+            title_link = title_tag.find("a", class_="font-red-sunglo bold")
+            if title_link:
+                title = title_link.text.strip()
 
-        # 2nd Attempt: Using alternative selectors
+        # If still no title, log an error and save HTML for manual inspection
         if not title:
-            alt_title_tag = soup.find("h1", class_="mb-0")  # Sometimes appears instead of <h2>
-            if alt_title_tag:
-                title = alt_title_tag.text.strip()
-
-        # 3rd Attempt: Extract title from <title> tag in case all else fails
-        if not title:
-            title_tag = soup.find("title")
-            if title_tag:
-                title = title_tag.text.split("|")[0].strip()
-
-        # If still no title, set a default
-        if not title:
-            title = "Unknown Title"
             logging.warning("⚠️ Unable to extract book title, setting to 'Unknown Title'")
+            with open("debug_royalroad.html", "w", encoding="utf-8") as debug_file:
+                debug_file.write(response.text)  # Save the full HTML for analysis
+            title = "Unknown Title"
 
         # Extract book ID
         book_id = extract_book_id(book_url)
@@ -86,12 +81,13 @@ def get_title_and_tags(book_url):
         if not tags:
             logging.warning(f"⚠️ No tags found for book {book_id}")
 
-        logging.info(f"✅ Extracted Book: {title}, ID: {book_id}, Tags: {tags}")
+        logging.info(f"✅ Extracted Book Title: {title}")
         return title, book_id, tags
 
     except Exception as e:
         logging.exception("❌ Error fetching book details")
         return None, None, None
+
 
 
 
