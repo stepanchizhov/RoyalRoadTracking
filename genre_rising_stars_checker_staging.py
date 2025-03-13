@@ -27,12 +27,10 @@ GENRE_RISING_STARS_URL = "https://www.royalroad.com/fictions/rising-stars?genre=
 # Initialize Cloudscraper
 scraper = cloudscraper.create_scraper(browser={'browser': 'firefox', 'platform': 'windows', 'desktop': True})
 
-
 def extract_book_id(book_url):
-    """Extracts the book ID from a Royal Road book URL, handling both URL formats."""
+    """Extracts the book ID from a Royal Road book URL, handling both formats."""
     match = re.search(r'/fiction/(\d+)', book_url)
     return match.group(1) if match else None
-
 
 def get_book_details(book_url):
     """Extracts book ID, title, and tags from a Royal Road book page."""
@@ -66,6 +64,52 @@ def get_book_details(book_url):
         logging.exception("Error fetching book details")
         return None, None, None
 
+def check_rising_stars(book_id, tags):
+    """Checks if the book appears in the main and genre-specific Rising Stars lists."""
+    results = {}
+
+    # Check the Main Rising Stars list first
+    try:
+        headers = {"User-Agent": random.choice(USER_AGENTS)}
+        response = scraper.get(MAIN_RISING_STARS_URL, headers=headers, timeout=10)
+        response.raise_for_status()
+        soup = BeautifulSoup(response.text, "html.parser")
+
+        # Find all book links in the main Rising Stars list
+        book_ids = [a["href"].split("/")[2] for a in soup.find_all("a", class_="font-red-sunglo bold")]
+
+        # Check if the book is present
+        if book_id in book_ids:
+            position = book_ids.index(book_id) + 1
+            results["Main Rising Stars"] = f"✅ Found in position #{position}"
+        else:
+            results["Main Rising Stars"] = "❌ Not found in Main Rising Stars list"
+
+    except Exception as e:
+        results["Main Rising Stars"] = f"⚠️ Failed to check: {e}"
+
+    # Check each genre's Rising Stars page
+    for tag in tags:
+        url = f"{GENRE_RISING_STARS_URL}{tag}"
+        try:
+            response = scraper.get(url, headers=headers, timeout=10)
+            response.raise_for_status()
+            soup = BeautifulSoup(response.text, "html.parser")
+
+            # Find all book links in the genre's Rising Stars list
+            book_ids = [a["href"].split("/")[2] for a in soup.find_all("a", class_="font-red-sunglo bold")]
+
+            # Check if the book is present
+            if book_id in book_ids:
+                position = book_ids.index(book_id) + 1
+                results[tag] = f"✅ Found in position #{position}"
+            else:
+                results[tag] = f"❌ Not found in '{tag}' Rising Stars list"
+
+        except Exception as e:
+            results[tag] = f"⚠️ Failed to check: {e}"
+
+    return results
 
 @app.route('/check_rising_stars', methods=['GET'])
 def api_rising_stars():
@@ -84,7 +128,6 @@ def api_rising_stars():
     else:
         logging.error("Failed to retrieve book details")
         return jsonify({"error": "Failed to retrieve book details"}), 500
-
 
 if __name__ == '__main__':
     import os
