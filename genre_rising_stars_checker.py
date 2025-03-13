@@ -5,6 +5,7 @@ from bs4 import BeautifulSoup
 import re
 import logging
 import random
+import time
 
 # Enable logging
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
@@ -34,18 +35,32 @@ def extract_book_id(book_url):
     return match.group(1) if match else None
 
 
+def fetch_with_retries(url, headers, max_retries=3):
+    """Fetches a URL with retry logic and exponential backoff."""
+    delay = 2  # Initial delay in seconds
+
+    for attempt in range(max_retries):
+        try:
+            logging.info(f"🔄 Attempt {attempt + 1}: Fetching {url}")
+            response = scraper.get(url, headers=headers, timeout=30)
+            response.raise_for_status()  # Raise error for HTTP 4xx/5xx status codes
+            return response  # Return response if successful
+        except Exception as e:
+            logging.error(f"❌ Request failed (attempt {attempt + 1}): {e}")
+            if attempt < max_retries - 1:
+                time.sleep(delay)
+                delay *= 2  # Exponential backoff
+            else:
+                raise Exception("Failed to fetch data after multiple attempts.")
+
+
 def get_title_and_tags(book_url):
     """Extracts book title, ID, and tags from a Royal Road book page."""
     try:
         headers = {"User-Agent": random.choice(USER_AGENTS)}
         logging.info(f"Fetching book page: {book_url} with User-Agent: {headers['User-Agent']}")
 
-        response = scraper.get(book_url, headers=headers, timeout=10)
-
-        logging.info(f"Response status: {response.status_code}")
-        if response.status_code != 200:
-            logging.error(f"❌ Failed to fetch book page, Status Code: {response.status_code}")
-            return "Unknown Title", None, []
+        response = fetch_with_retries(book_url, headers)
 
         soup = BeautifulSoup(response.text, "html.parser")
 
@@ -62,19 +77,15 @@ def get_title_and_tags(book_url):
         book_page_url = f"https://www.royalroad.com/fiction/{book_id}/"
         logging.info(f"Fetching book's main page: {book_page_url}")
 
-        book_response = scraper.get(book_page_url, headers=headers, timeout=10)
-        if book_response.status_code != 200:
-            logging.error(f"❌ Failed to fetch book's main page, Status Code: {book_response.status_code}")
-            title = "Unknown Title"
+        book_response = fetch_with_retries(book_page_url, headers)
+
+        book_soup = BeautifulSoup(book_response.text, "html.parser")
+        title_tag = book_soup.find("title")
+        if title_tag:
+            title = title_tag.text.strip().replace(" | Royal Road", "")
+            title = re.sub(r'&#\d+;', '', title)  # Remove HTML entities if needed
         else:
-            book_soup = BeautifulSoup(book_response.text, "html.parser")
-            title_tag = book_soup.find("title")
-            if title_tag:
-                title = title_tag.text.strip()
-                title = title.replace(" | Royal Road", "")  # Remove extra branding
-                title = re.sub(r'&#\d+;', '', title)  # Remove HTML entities if needed
-            else:
-                title = "Unknown Title"
+            title = "Unknown Title"
 
         logging.info(f"✅ Extracted Book Title: {title}, ID: {book_id}, Tags: {tags}")
         return title, book_id, tags
@@ -82,7 +93,6 @@ def get_title_and_tags(book_url):
     except Exception as e:
         logging.exception("❌ Error fetching book details")
         return "Unknown Title", None, []
-
 
 
 def check_rising_stars(book_id, tags):
@@ -94,8 +104,7 @@ def check_rising_stars(book_id, tags):
         headers = {"User-Agent": random.choice(USER_AGENTS)}
         logging.info("Checking Main Rising Stars list...")
 
-        response = scraper.get(MAIN_RISING_STARS_URL, headers=headers, timeout=10)
-        response.raise_for_status()
+        response = fetch_with_retries(MAIN_RISING_STARS_URL, headers)
 
         soup = BeautifulSoup(response.text, "html.parser")
         book_ids = [a["href"].split("/")[2] for a in soup.find_all("a", class_="font-red-sunglo bold")]
@@ -117,8 +126,7 @@ def check_rising_stars(book_id, tags):
         url = f"{GENRE_RISING_STARS_URL}{tag}"
         try:
             logging.info(f"Checking Rising Stars for genre: {tag}")
-            response = scraper.get(url, headers=headers, timeout=10)
-            response.raise_for_status()
+            response = fetch_with_retries(url, headers)
 
             soup = BeautifulSoup(response.text, "html.parser")
             book_ids = [a["href"].split("/")[2] for a in soup.find_all("a", class_="font-red-sunglo bold")]
