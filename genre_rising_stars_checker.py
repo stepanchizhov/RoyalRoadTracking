@@ -29,9 +29,11 @@ scraper = cloudscraper.create_scraper(browser={'browser': 'firefox', 'platform':
 
 
 def extract_book_id(book_url):
-    """Extracts the book ID from a Royal Road book URL."""
-    match = re.search(r'/fiction/(\d+)/', book_url)
-    return match.group(1) if match else None
+    """Extracts the book ID from a Royal Road book URL, handling both URL formats."""
+    match = re.search(r'/fiction/(\d+)', book_url)  # Matches both /fiction/105229/ and /fiction/105229/title
+    if match:
+        return match.group(1)
+    return None
 
 
 def get_tags_and_id(book_url):
@@ -39,14 +41,14 @@ def get_tags_and_id(book_url):
     try:
         headers = {"User-Agent": random.choice(USER_AGENTS)}
         logging.info(f"Fetching book page: {book_url} with User-Agent: {headers['User-Agent']}")
-        
+
         response = scraper.get(book_url, headers=headers, timeout=10)
-        
+
         logging.info(f"Response status: {response.status_code}")
         if response.status_code != 200:
             logging.error(f"❌ Failed to fetch book page, Status Code: {response.status_code}")
             return None, None
-        
+
         soup = BeautifulSoup(response.text, "html.parser")
 
         # Extract book ID
@@ -82,10 +84,10 @@ def check_rising_stars(book_id, tags):
     try:
         headers = {"User-Agent": random.choice(USER_AGENTS)}
         logging.info("Checking Main Rising Stars list...")
-        
+
         response = scraper.get(MAIN_RISING_STARS_URL, headers=headers, timeout=10)
         response.raise_for_status()
-        
+
         soup = BeautifulSoup(response.text, "html.parser")
         book_ids = [a["href"].split("/")[2] for a in soup.find_all("a", class_="font-red-sunglo bold")]
 
@@ -108,7 +110,7 @@ def check_rising_stars(book_id, tags):
             logging.info(f"Checking Rising Stars for genre: {tag}")
             response = scraper.get(url, headers=headers, timeout=10)
             response.raise_for_status()
-            
+
             soup = BeautifulSoup(response.text, "html.parser")
             book_ids = [a["href"].split("/")[2] for a in soup.find_all("a", class_="font-red-sunglo bold")]
 
