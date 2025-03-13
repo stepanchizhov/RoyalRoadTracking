@@ -6,7 +6,7 @@ import re
 import traceback  # ✅ For better error logging
 
 app = Flask(__name__)
-CORS(app, resources={r"/*": {"origins": "*"}})  # ✅ Fixes "Failed to Fetch" on WordPress
+CORS(app, resources={r"/*": {"origins": "*"}}, supports_credentials=True)  # ✅ Fixes "Failed to Fetch" on WordPress
 
 # User-Agent rotation to avoid bot detection
 USER_AGENTS = [
