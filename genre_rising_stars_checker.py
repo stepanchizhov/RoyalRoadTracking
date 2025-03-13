@@ -29,15 +29,13 @@ scraper = cloudscraper.create_scraper(browser={'browser': 'firefox', 'platform':
 
 
 def extract_book_id(book_url):
-    """Extracts the book ID from a Royal Road book URL, handling both URL formats."""
-    match = re.search(r'/fiction/(\d+)', book_url)  # Matches both /fiction/105229/ and /fiction/105229/title
-    if match:
-        return match.group(1)
-    return None
+    """Extracts the book ID from a Royal Road book URL."""
+    match = re.search(r'/fiction/(\d+)', book_url)
+    return match.group(1) if match else None
 
 
-def get_tags_and_id(book_url):
-    """Extracts book ID and tags from a Royal Road book page."""
+def get_title_and_tags(book_url):
+    """Extracts book title, ID, and tags from a Royal Road book page."""
     try:
         headers = {"User-Agent": random.choice(USER_AGENTS)}
         logging.info(f"Fetching book page: {book_url} with User-Agent: {headers['User-Agent']}")
@@ -47,7 +45,7 @@ def get_tags_and_id(book_url):
         logging.info(f"Response status: {response.status_code}")
         if response.status_code != 200:
             logging.error(f"❌ Failed to fetch book page, Status Code: {response.status_code}")
-            return None, None
+            return "Unknown Title", None, []
 
         soup = BeautifulSoup(response.text, "html.parser")
 
@@ -55,25 +53,36 @@ def get_tags_and_id(book_url):
         book_id = extract_book_id(book_url)
         if not book_id:
             logging.error("❌ Failed to extract book ID from URL")
-            return None, None
+            return "Unknown Title", None, []
 
         # Extract tags from the book's page
-        tags = []
-        for tag in soup.find_all("a", class_="fiction-tag"):
-            tag_url = tag["href"]
-            if "tagsAdd=" in tag_url:
-                tag_name = tag_url.split("tagsAdd=")[-1]
-                tags.append(tag_name)
+        tags = [tag["href"].split("tagsAdd=")[-1] for tag in soup.find_all("a", class_="fiction-tag") if "tagsAdd=" in tag["href"]]
 
-        if not tags:
-            logging.warning(f"⚠️ No tags found for book {book_id}")
+        # Fetch the book's **own** page using the book ID
+        book_page_url = f"https://www.royalroad.com/fiction/{book_id}/"
+        logging.info(f"Fetching book's main page: {book_page_url}")
 
-        logging.info(f"✅ Extracted book ID: {book_id}, Tags: {tags}")
-        return book_id, tags
+        book_response = scraper.get(book_page_url, headers=headers, timeout=10)
+        if book_response.status_code != 200:
+            logging.error(f"❌ Failed to fetch book's main page, Status Code: {book_response.status_code}")
+            title = "Unknown Title"
+        else:
+            book_soup = BeautifulSoup(book_response.text, "html.parser")
+            title_tag = book_soup.find("title")
+            if title_tag:
+                title = title_tag.text.strip()
+                title = title.replace(" | Royal Road", "")  # Remove extra branding
+                title = re.sub(r'&#\d+;', '', title)  # Remove HTML entities if needed
+            else:
+                title = "Unknown Title"
+
+        logging.info(f"✅ Extracted Book Title: {title}, ID: {book_id}, Tags: {tags}")
+        return title, book_id, tags
 
     except Exception as e:
         logging.exception("❌ Error fetching book details")
-        return None, None
+        return "Unknown Title", None, []
+
 
 
 def check_rising_stars(book_id, tags):
@@ -137,16 +146,16 @@ def api_rising_stars():
 
     if not book_url or "royalroad.com" not in book_url:
         logging.error("❌ Invalid Royal Road URL")
-        return jsonify({"error": "Invalid Royal Road URL"}), 400
+        return jsonify({"error": "Invalid Royal Road URL", "results": {}, "title": "Unknown Title"}), 400
 
-    book_id, tags = get_tags_and_id(book_url)
+    title, book_id, tags = get_title_and_tags(book_url)
 
     if book_id and tags:
         results = check_rising_stars(book_id, tags)
-        return jsonify(results)
+        return jsonify({"title": title, "results": results})
     else:
         logging.error("❌ Failed to retrieve book details")
-        return jsonify({"error": "Failed to retrieve book details"}), 500
+        return jsonify({"error": "Failed to retrieve book details", "title": title, "results": {}}), 500
 
 
 if __name__ == '__main__':
