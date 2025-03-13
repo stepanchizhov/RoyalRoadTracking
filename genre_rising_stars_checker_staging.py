@@ -3,7 +3,7 @@ from flask_cors import CORS  # ✅ Enable cross-origin requests for WordPress
 import cloudscraper
 from bs4 import BeautifulSoup
 import re
-import requests
+import traceback  # ✅ For better error logging
 
 app = Flask(__name__)
 CORS(app, resources={r"/*": {"origins": "*"}})  # ✅ Fixes "Failed to Fetch" on WordPress
@@ -50,7 +50,8 @@ def get_tags_and_id(book_url):
         return book_id, tags
 
     except Exception as e:
-        print(f"Error in get_tags_and_id: {e}")  # Logging
+        print("ERROR in get_tags_and_id:", e)
+        traceback.print_exc()
         return None, None
 
 def check_rising_stars(book_id, tags):
@@ -61,6 +62,10 @@ def check_rising_stars(book_id, tags):
     try:
         headers = {"User-Agent": USER_AGENTS[0]}
         response = scraper.get(MAIN_RISING_STARS_URL, headers=headers, timeout=10)
+        
+        print("Main Rising Stars Response Status:", response.status_code)  # ✅ Debugging
+        print("Main Rising Stars Response Content:", response.text[:500])  # ✅ First 500 chars
+
         response.raise_for_status()
         soup = BeautifulSoup(response.text, "html.parser")
 
@@ -75,7 +80,8 @@ def check_rising_stars(book_id, tags):
             results["Main Rising Stars"] = "❌ Not found in Main Rising Stars list"
 
     except Exception as e:
-        print(f"Error checking main Rising Stars list: {e}")  # Logging
+        print("ERROR in check_rising_stars (Main List):", e)
+        traceback.print_exc()
         results["Main Rising Stars"] = f"⚠️ Failed to check: {e}"
 
     # Check each genre's Rising Stars page
@@ -83,6 +89,10 @@ def check_rising_stars(book_id, tags):
         url = f"{GENRE_RISING_STARS_URL}{tag}"
         try:
             response = scraper.get(url, headers=headers, timeout=10)
+            
+            print(f"Checking {tag} Rising Stars - Response Status:", response.status_code)  # ✅ Debugging
+            print(f"Checking {tag} Rising Stars - Response Content:", response.text[:500])  # ✅ First 500 chars
+
             response.raise_for_status()
             soup = BeautifulSoup(response.text, "html.parser")
 
@@ -97,27 +107,37 @@ def check_rising_stars(book_id, tags):
                 results[tag] = f"❌ Not found in '{tag}' Rising Stars list"
 
         except Exception as e:
-            print(f"Error checking genre '{tag}': {e}")  # Logging
+            print(f"ERROR in check_rising_stars ({tag} List):", e)
+            traceback.print_exc()
             results[tag] = f"⚠️ Failed to check: {e}"
 
     return results
 
 @app.route('/check_rising_stars', methods=['GET'])
 def api_rising_stars():
-    book_url = request.args.get("book_url")
+    try:
+        book_url = request.args.get("book_url")
 
-    # Validate the URL
-    if not book_url or "royalroad.com" not in book_url:
-        return jsonify({"error": "Invalid Royal Road URL"}), 400
+        # Validate the URL
+        if not book_url or "royalroad.com" not in book_url:
+            return jsonify({"error": "Invalid Royal Road URL"}), 400
 
-    # Fetch book ID and tags
-    book_id, tags = get_tags_and_id(book_url)
+        print(f"Received request for book URL: {book_url}")  # ✅ Debugging
 
-    if book_id and tags:
-        results = check_rising_stars(book_id, tags)
-        return jsonify(results)
-    else:
-        return jsonify({"error": "Failed to retrieve book details"}), 500
+        # Fetch book ID and tags
+        book_id, tags = get_tags_and_id(book_url)
+
+        if book_id and tags:
+            results = check_rising_stars(book_id, tags)
+            return jsonify(results)
+        else:
+            print("ERROR: Failed to retrieve book details")
+            return jsonify({"error": "Failed to retrieve book details"}), 500
+
+    except Exception as e:
+        print("Unexpected error:", e)
+        traceback.print_exc()
+        return jsonify({"error": f"Unexpected server error: {str(e)}"}), 500
 
 if __name__ == '__main__':
     import os
