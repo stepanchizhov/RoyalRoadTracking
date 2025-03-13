@@ -49,9 +49,21 @@ def get_title_and_tags(book_url):
 
         soup = BeautifulSoup(response.text, "html.parser")
 
-        # Extract book title from <h2 class="fiction-title">
+        # Attempt 1: Extract title from <h2 class="fiction-title">
         title_tag = soup.find("h2", class_="fiction-title")
-        title = title_tag.a.text.strip() if title_tag and title_tag.a else "Unknown Title"
+        if title_tag and title_tag.a:
+            title = title_tag.a.text.strip()
+        else:
+            # Attempt 2: Extract title from <figure> alt attribute
+            figure_tag = soup.find("figure", class_="col-sm-2")
+            if figure_tag:
+                img_tag = figure_tag.find("img", class_="img-responsive")
+                if img_tag and img_tag.has_attr("alt"):
+                    title = img_tag["alt"].strip()
+                else:
+                    title = "Unknown Title"
+            else:
+                title = "Unknown Title"
 
         # Extract book ID
         book_id = extract_book_id(book_url)
@@ -68,6 +80,7 @@ def get_title_and_tags(book_url):
     except Exception as e:
         logging.exception("❌ Error fetching book details")
         return "Unknown Title", None, []
+
 
 
 def check_rising_stars(book_id, tags):
