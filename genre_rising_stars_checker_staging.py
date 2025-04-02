@@ -694,60 +694,31 @@ def clear_cache():
 
 @app.route('/check_rising_stars', methods=['GET'])
 def api_rising_stars():
-    # Existing code...
-    start_time = time.time()
     book_url = request.args.get("book_url")
     estimate_distance = request.args.get("estimate_distance", "false").lower() == "true"
     
-    request_id = f"req_{int(time.time())}_{random.randint(1000, 9999)}"
-    logging.info(f"[{request_id}] 📝 Received request for book URL: {book_url}, estimate_distance: {estimate_distance}")
+    logging.info(f"Received request for book URL: {book_url}, estimate_distance: {estimate_distance}")
 
-    # Validate input
-    if not book_url:
-        logging.error(f"[{request_id}] ❌ Missing book URL")
-        return jsonify({
-            "error": "Missing book URL parameter", 
-            "results": {}, 
-            "title": "Unknown Title"
-        }), 400
-        
-    if "royalroad.com" not in book_url:
-        logging.error(f"[{request_id}] ❌ Invalid Royal Road URL: {book_url}")
-        return jsonify({
-            "error": "Invalid Royal Road URL. URL must be from royalroad.com", 
-            "results": {}, 
-            "title": "Unknown Title"
-        }), 400
+    if not book_url or "royalroad.com" not in book_url:
+        logging.error("❌ Invalid Royal Road URL")
+        return jsonify({"error": "Invalid Royal Road URL", "results": {}, "title": "Unknown Title"}), 400
 
-    try:
-        # Extract book ID from URL first
-        book_id = extract_book_id(book_url)
-        if not book_id:
-            logging.error(f"[{request_id}] ❌ Could not extract book ID from URL: {book_url}")
-            return jsonify({
-                "error": "Could not extract book ID from URL", 
-                "results": {}, 
-                "title": "Unknown Title"
-            }), 400
-            
-        # Get title and tags
-        title, book_id, tags = get_title_and_tags(book_url, book_id)
+    title, book_id, tags = get_title_and_tags(book_url)
+
+    if not book_id or not tags:
+        logging.error("❌ Failed to retrieve book details")
+        return jsonify({"error": "Failed to retrieve book details", "title": title, "results": {}}), 500
         
-        if not tags:
-            logging.warning(f"[{request_id}] ⚠️ No tags found for book ID {book_id}")
-            
-        # Check rising stars
     results = check_rising_stars(book_id, tags)
     
     # Generate distance estimate if requested
     distance_estimate = {}
     if estimate_distance:
-        # Debug log to confirm this condition is triggered
-        logging.info(f"[{request_id}] 📏 Distance estimation requested. Main RS status: {results.get('Main Rising Stars', '')}")
+        logging.info(f"📏 Distance estimation requested for book: {title}")
         
         # Only run estimation if book is not already in main Rising Stars
         if results.get("Main Rising Stars", "").startswith("❌"):
-            logging.info(f"[{request_id}] 📏 Starting distance estimation to main Rising Stars list...")
+            logging.info(f"📏 Book not in Main Rising Stars, starting estimation...")
             
             # Get headers for API requests
             headers = {
@@ -760,40 +731,30 @@ def api_rising_stars():
             
             try:
                 distance_estimate = estimate_distance_to_main_rs(book_id, results, tags, headers)
-                logging.info(f"[{request_id}] 📏 Distance estimation completed")
+                logging.info(f"📏 Distance estimation completed")
             except Exception as e:
-                logging.exception(f"[{request_id}] ❌ Error during distance estimation: {str(e)}")
+                logging.exception(f"❌ Error during distance estimation: {str(e)}")
                 distance_estimate = {"error": f"Error during estimation: {str(e)}"}
         else:
             distance_estimate = {
                 "message": "Book is already in the Main Rising Stars list",
                 "status": "ALREADY_IN_LIST"
             }
-            logging.info(f"[{request_id}] 📏 Book already in Main Rising Stars, no estimation needed")
-        
-        response_data = {
-            "title": title, 
-            "results": results,
-            "book_id": book_id,
-            "tags": tags,
-            "processing_time": f"{processing_time:.2f} seconds"
-        }
-        
-        # Add distance estimate if it was requested
-        if estimate_distance:
-            response_data["distance_estimate"] = distance_estimate
-        
-        return jsonify(response_data)
-        
-    except Exception as e:
-        error_type = type(e).__name__
-        logging.exception(f"[{request_id}] ❌ Error processing request: {error_type}: {str(e)}")
-        
-        return jsonify({
-            "error": f"Failed to process request: {str(e)}", 
-            "title": getattr(locals(), 'title', "Unknown Title"), 
-            "results": {}
-        }), 500
+            logging.info(f"📏 Book already in Main Rising Stars, no estimation needed")
+    
+    # Build response
+    response_data = {
+        "title": title, 
+        "results": results,
+        "book_id": book_id,
+        "tags": tags
+    }
+    
+    # Add distance estimate if it was requested
+    if estimate_distance:
+        response_data["distance_estimate"] = distance_estimate
+    
+    return jsonify(response_data)
 
 # Function to periodically clean up cache (optional, for long-running servers)
 def cache_cleanup():
