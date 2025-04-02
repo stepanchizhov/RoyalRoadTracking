@@ -454,114 +454,84 @@ def process_genre_estimate(genre_name, genre_position, main_rs_books, headers):
             "book_genre_position": genre_position
         }
 
-def create_combined_estimate(best_estimate, worst_estimate, main_rs_size):
-    """Creates a combined estimate from best and worst genre estimates with prioritization."""
+def create_combined_estimate(best_estimate, worst_estimate, middle_estimate, main_rs_size):
+    """Creates a combined estimate from best, worst, and middle genre estimates with prioritization."""
     combined_estimate = {"main_rs_size": main_rs_size}
     
-    # Check if we have valid estimates
+    # Check which estimates are valid
     best_valid = "estimated_position" in best_estimate
     worst_valid = worst_estimate and "estimated_position" in worst_estimate
+    middle_valid = middle_estimate and "estimated_position" in middle_estimate
     
-    if not best_valid and not worst_valid:
+    valid_estimates = []
+    if best_valid:
+        valid_estimates.append(("best", best_estimate))
+    if worst_valid:
+        valid_estimates.append(("worst", worst_estimate))
+    if middle_valid:
+        valid_estimates.append(("middle", middle_estimate))
+    
+    if not valid_estimates:
         # No valid estimates
         combined_estimate["status"] = "UNKNOWN"
         combined_estimate["message"] = "Could not calculate a position estimate with the available data"
         return combined_estimate
     
-    # Prioritize estimates based on their proximity to the cutoff and reliability
-    if best_valid and worst_valid:
-        # We have both estimates - check if either one puts the book in range
-        best_in_range = best_estimate.get("status") == "IN_RANGE"
-        worst_in_range = worst_estimate.get("status") == "IN_RANGE"
-        
-        if best_in_range and not worst_in_range:
-            # Best estimate says it's in range, worst doesn't - prioritize the best
-            combined_estimate["estimated_position"] = best_estimate["estimated_position"]
-            combined_estimate["status"] = "IN_RANGE"
-            combined_estimate["message"] = f"Book is estimated to be in the Main Rising Stars at around position #{best_estimate['estimated_position']}"
-            combined_estimate["best_genre_estimate"] = best_estimate["estimated_position"]
-            combined_estimate["worst_genre_estimate"] = worst_estimate["estimated_position"]
-            combined_estimate["prioritized"] = "best"
-            
-        elif worst_in_range and not best_in_range:
-            # Worst estimate says it's in range, best doesn't - prioritize the worst
-            combined_estimate["estimated_position"] = worst_estimate["estimated_position"]
-            combined_estimate["status"] = "IN_RANGE"
-            combined_estimate["message"] = f"Book is estimated to be in the Main Rising Stars at around position #{worst_estimate['estimated_position']}"
-            combined_estimate["best_genre_estimate"] = best_estimate["estimated_position"]
-            combined_estimate["worst_genre_estimate"] = worst_estimate["estimated_position"]
-            combined_estimate["prioritized"] = "worst"
-            
-        elif best_in_range and worst_in_range:
-            # Both estimates say it's in range - use an average
-            combined_position = (best_estimate["estimated_position"] + worst_estimate["estimated_position"]) / 2
-            combined_estimate["estimated_position"] = int(round(combined_position))
-            combined_estimate["status"] = "IN_RANGE"
-            combined_estimate["message"] = f"Book is estimated to be in the Main Rising Stars at around position #{int(round(combined_position))}"
-            combined_estimate["best_genre_estimate"] = best_estimate["estimated_position"]
-            combined_estimate["worst_genre_estimate"] = worst_estimate["estimated_position"]
-            combined_estimate["prioritized"] = "average"
-            
-        else:
-            # Neither estimate puts it in range - use the one closest to the cutoff
-            best_distance = abs(best_estimate["estimated_position"] - main_rs_size)
-            worst_distance = abs(worst_estimate["estimated_position"] - main_rs_size)
-            
-            if best_distance <= worst_distance:
-                # Best estimate is closer to the cutoff
-                combined_estimate["estimated_position"] = best_estimate["estimated_position"]
-                combined_estimate["status"] = "OUTSIDE_RANGE"
-                combined_estimate["positions_away"] = max(0, best_estimate["estimated_position"] - main_rs_size)
-                combined_estimate["message"] = f"Book is estimated to be {combined_estimate['positions_away']} positions away from joining Main Rising Stars"
-                combined_estimate["best_genre_estimate"] = best_estimate["estimated_position"]
-                combined_estimate["worst_genre_estimate"] = worst_estimate["estimated_position"]
-                combined_estimate["prioritized"] = "best"
-            else:
-                # Worst estimate is closer to the cutoff
-                combined_estimate["estimated_position"] = worst_estimate["estimated_position"]
-                combined_estimate["status"] = "OUTSIDE_RANGE"
-                combined_estimate["positions_away"] = max(0, worst_estimate["estimated_position"] - main_rs_size)
-                combined_estimate["message"] = f"Book is estimated to be {combined_estimate['positions_away']} positions away from joining Main Rising Stars"
-                combined_estimate["best_genre_estimate"] = best_estimate["estimated_position"]
-                combined_estimate["worst_genre_estimate"] = worst_estimate["estimated_position"]
-                combined_estimate["prioritized"] = "worst"
+    # Categorize estimates as in-range or out-of-range
+    in_range_estimates = []
+    out_of_range_estimates = []
     
-    elif best_valid:
-        # Only have best genre estimate
-        combined_estimate["estimated_position"] = best_estimate["estimated_position"]
-        combined_estimate["best_genre_estimate"] = best_estimate["estimated_position"]
-        combined_estimate["prioritized"] = "best"
-        
-        if best_estimate["estimated_position"] <= main_rs_size:
-            combined_estimate["status"] = "IN_RANGE"
-            combined_estimate["message"] = f"Book is estimated to be in the Main Rising Stars at around position #{best_estimate['estimated_position']}"
+    for label, estimate in valid_estimates:
+        if estimate["estimated_position"] <= main_rs_size:
+            in_range_estimates.append((label, estimate))
         else:
-            positions_away = best_estimate["estimated_position"] - main_rs_size
-            combined_estimate["status"] = "OUTSIDE_RANGE"
-            combined_estimate["positions_away"] = positions_away
-            combined_estimate["message"] = f"Book is estimated to be {positions_away} positions away from joining Main Rising Stars"
+            out_of_range_estimates.append((label, estimate))
     
-    elif worst_valid:
-        # Only have worst genre estimate
-        combined_estimate["estimated_position"] = worst_estimate["estimated_position"]
-        combined_estimate["worst_genre_estimate"] = worst_estimate["estimated_position"]
-        combined_estimate["prioritized"] = "worst"
+    # Add all estimated positions to the combined estimate for reference
+    for label, estimate in valid_estimates:
+        combined_estimate[f"{label}_genre_estimate"] = estimate["estimated_position"]
+    
+    # Prioritization logic
+    if in_range_estimates:
+        # At least one estimate puts the book in range
+        # Sort by position (prefer higher position numbers, closer to the cutoff)
+        in_range_estimates.sort(key=lambda x: x[1]["estimated_position"], reverse=True)
+        selected_label, selected_estimate = in_range_estimates[0]
         
-        if worst_estimate["estimated_position"] <= main_rs_size:
-            combined_estimate["status"] = "IN_RANGE"
-            combined_estimate["message"] = f"Book is estimated to be in the Main Rising Stars at around position #{worst_estimate['estimated_position']}"
-        else:
-            positions_away = worst_estimate["estimated_position"] - main_rs_size
-            combined_estimate["status"] = "OUTSIDE_RANGE"
-            combined_estimate["positions_away"] = positions_away
-            combined_estimate["message"] = f"Book is estimated to be {positions_away} positions away from joining Main Rising Stars"
+        combined_estimate["estimated_position"] = selected_estimate["estimated_position"]
+        combined_estimate["status"] = "IN_RANGE"
+        combined_estimate["message"] = f"Book is estimated to be in the Main Rising Stars at around position #{selected_estimate['estimated_position']}"
+        combined_estimate["prioritized"] = selected_label
+        
+    else:
+        # All estimates are out of range
+        # Sort by how close they are to the cutoff (prefer lower positions_away)
+        out_of_range_estimates.sort(key=lambda x: x[1]["estimated_position"] - main_rs_size)
+        selected_label, selected_estimate = out_of_range_estimates[0]
+        
+        positions_away = selected_estimate["estimated_position"] - main_rs_size
+        combined_estimate["estimated_position"] = selected_estimate["estimated_position"]
+        combined_estimate["status"] = "OUTSIDE_RANGE"
+        combined_estimate["positions_away"] = positions_away
+        combined_estimate["message"] = f"Book is estimated to be {positions_away} positions away from joining Main Rising Stars"
+        combined_estimate["prioritized"] = selected_label
+    
+    # If we have multiple estimates, calculate an average as well
+    if len(valid_estimates) > 1:
+        avg_position = sum(estimate["estimated_position"] for _, estimate in valid_estimates) / len(valid_estimates)
+        combined_estimate["average_position"] = int(round(avg_position))
+        
+        # Add a note about the average if it differs significantly from the prioritized estimate
+        selected_position = combined_estimate["estimated_position"]
+        if abs(selected_position - combined_estimate["average_position"]) > 5:
+            combined_estimate["average_note"] = f"Average of all estimates is position #{combined_estimate['average_position']}"
     
     return combined_estimate
 
 def estimate_distance_to_main_rs(book_id, genre_results, tags, headers):
     """
     Estimate how far the book is from the main Rising Stars list.
-    Modified to handle timeouts better and process incrementally.
+    Modified to handle timeouts better and select the most suitable genres.
     """
     # Check cache first
     cache_key = f"distance_estimate_{book_id}"
@@ -591,48 +561,93 @@ def estimate_distance_to_main_rs(book_id, genre_results, tags, headers):
         # Create a dictionary of genre -> position for this book
         book_positions = {}
         for genre, status in genre_results.items():
-            if status.startswith("✅ Found in position #"):
+            if status.startswith("✅ Found in position #") and genre != "Main Rising Stars":
                 position = int(re.search(r"#(\d+)", status).group(1))
                 book_positions[genre] = position
         
         if not book_positions:
             return {"message": "Book not found in any genre Rising Stars lists, cannot estimate distance"}
         
-        # Find best and worst genres (where book has highest and lowest position)
-        best_genre = min(book_positions.items(), key=lambda x: x[1])
-        worst_genre = max(book_positions.items(), key=lambda x: x[1])
+        # Sort genres by the book's position (best to worst)
+        sorted_genres = sorted(book_positions.items(), key=lambda x: x[1])
         
-        # Process best genre first
-        best_genre_name, best_genre_position = best_genre
-        logging.info(f"🌟 Book has best position in {best_genre_name} at #{best_genre_position}")
-        
-        # We'll process one genre at a time to avoid timeouts
-        # Start with best genre
-        best_estimate = process_genre_estimate(
-            best_genre_name, 
-            best_genre_position, 
-            main_rs_books, 
-            headers
-        )
-        estimates["best_genre_estimate"] = best_estimate
-        
-        # Now do the same for worst genre if different from best genre
-        worst_genre_name, worst_genre_position = worst_genre
-        if worst_genre_name != best_genre_name:  # Only do this if different from best genre
-            logging.info(f"🔍 Book has worst position in {worst_genre_name} at #{worst_genre_position}")
+        # Find suitable genres for estimation
+        suitable_genres = []
+        for genre_name, genre_position in sorted_genres:
+            # Process this genre to check if it's suitable
+            genre_books = get_books_for_genre(genre_name, headers)
+            common_books = []
             
-            worst_estimate = process_genre_estimate(
-                worst_genre_name, 
-                worst_genre_position, 
-                main_rs_books, 
-                headers
-            )
-            estimates["worst_genre_estimate"] = worst_estimate
+            for genre_book in genre_books:
+                for main_book in main_rs_books:
+                    if genre_book["book_id"] == main_book["book_id"]:
+                        common_books.append({
+                            "book_id": genre_book["book_id"],
+                            "genre_position": genre_book["position"],
+                            "main_position": main_book["position"]
+                        })
+                        break
+            
+            # Sort by main position
+            if common_books:
+                common_books.sort(key=lambda x: x["main_position"])
+                
+                # Check if this genre has enough reference points
+                if len(common_books) > 1:
+                    # Check if the distance between first and last book is at least 5
+                    main_distance = common_books[-1]["main_position"] - common_books[0]["main_position"]
+                    if main_distance >= 5:
+                        suitable_genres.append((genre_name, genre_position, common_books))
+                        logging.info(f"✅ Genre {genre_name} is suitable for estimation with {len(common_books)} common books and distance {main_distance}")
+                    else:
+                        logging.info(f"⚠️ Genre {genre_name} has insufficient distance between reference books ({main_distance})")
+                else:
+                    logging.info(f"⚠️ Genre {genre_name} has only {len(common_books)} common books")
+        
+        # If we have no suitable genres, use the original sorting
+        if not suitable_genres and sorted_genres:
+            logging.info(f"⚠️ No suitable genres found, using original sorting")
+            for genre_name, genre_position in sorted_genres[:3]:  # Try top 3 genres
+                suitable_genres.append((genre_name, genre_position, []))
+        
+        # Process best, worst, and middle genres
+        genres_to_process = []
+        
+        if suitable_genres:
+            # Best genre (highest position/lowest number)
+            genres_to_process.append(("best", suitable_genres[0][0], suitable_genres[0][1]))
+            
+            # Worst genre (if we have at least 2 genres)
+            if len(suitable_genres) > 1:
+                genres_to_process.append(("worst", suitable_genres[-1][0], suitable_genres[-1][1]))
+            
+            # Middle genre (if we have at least 3 genres)
+            if len(suitable_genres) >= 3:
+                middle_index = len(suitable_genres) // 2
+                genres_to_process.append(("middle", suitable_genres[middle_index][0], suitable_genres[middle_index][1]))
+        else:
+            # Fallback to original sorting if no suitable genres
+            if sorted_genres:
+                genres_to_process.append(("best", sorted_genres[0][0], sorted_genres[0][1]))
+                if len(sorted_genres) > 1:
+                    genres_to_process.append(("worst", sorted_genres[-1][0], sorted_genres[-1][1]))
+                if len(sorted_genres) >= 3:
+                    middle_index = len(sorted_genres) // 2
+                    genres_to_process.append(("middle", sorted_genres[middle_index][0], sorted_genres[middle_index][1]))
+        
+        # Process each selected genre
+        for label, genre_name, genre_position in genres_to_process:
+            logging.info(f"🔍 Processing {label} genre: {genre_name} at position #{genre_position}")
+            genre_estimate = process_genre_estimate(genre_name, genre_position, main_rs_books, headers)
+            estimates[f"{label}_genre_estimate"] = genre_estimate
         
         # Create a combined estimate
-        combined_estimate = create_combined_estimate(best_estimate, 
-                                                     estimates.get("worst_genre_estimate"),
-                                                     len(main_rs_books))
+        combined_estimate = create_combined_estimate(
+            estimates.get("best_genre_estimate", {}),
+            estimates.get("worst_genre_estimate", {}),
+            estimates.get("middle_genre_estimate", {}),
+            len(main_rs_books)
+        )
         
         estimates["combined_estimate"] = combined_estimate
         
@@ -866,21 +881,40 @@ def api_rising_stars():
             logging.exception(f"⚠️ [{request_id}] Failed to check {tag} Rising Stars: {str(e)}")
             final_results[tag] = f"⚠️ Failed to check: {str(e)}"
     
+    # Check if the book is already on the main Rising Stars list
+    already_on_main_rs = False
+    main_rs_position = None
+    
+    if "Main Rising Stars" in final_results and "✅ Found in position #" in final_results["Main Rising Stars"]:
+        already_on_main_rs = True
+        position_match = re.search(r"#(\d+)", final_results["Main Rising Stars"])
+        if position_match:
+            main_rs_position = int(position_match.group(1))
+    
     # Distance estimation logic with improved error handling
     distance_estimate = {}
     if estimate_distance_param:
-        try:
-            cache_key_distance = f"distance_estimate_{book_id}"
-            with cache_lock:
-                if cache_key_distance in cache:
-                    distance_estimate = cache[cache_key_distance]
-                    logging.info(f"📋 [{request_id}] Cache hit for distance estimate: {book_id}")
-                else:
-                    distance_estimate = estimate_distance_to_main_rs(book_id, final_results, tags, headers)
-                    # Cache is handled inside the estimate_distance_to_main_rs function
-        except Exception as e:
-            logging.critical(f"❌ [{request_id}] CRITICAL ERROR during distance estimation: {str(e)}")
-            distance_estimate = {"error": f"Error during estimation: {str(e)}"}
+        if already_on_main_rs:
+            # Joking message when already on main list
+            distance_estimate = {
+                "message": f"Hey! Why are you wasting precious energy? Your book is already on the main Rising Stars list at position #{main_rs_position}! 🎉",
+                "already_on_main": True,
+                "main_position": main_rs_position
+            }
+            logging.info(f"🎯 [{request_id}] Book already on main Rising Stars at position #{main_rs_position}")
+        else:
+            try:
+                cache_key_distance = f"distance_estimate_{book_id}"
+                with cache_lock:
+                    if cache_key_distance in cache:
+                        distance_estimate = cache[cache_key_distance]
+                        logging.info(f"📋 [{request_id}] Cache hit for distance estimate: {book_id}")
+                    else:
+                        distance_estimate = estimate_distance_to_main_rs(book_id, final_results, tags, headers)
+                        # Cache is handled inside the estimate_distance_to_main_rs function
+            except Exception as e:
+                logging.critical(f"❌ [{request_id}] CRITICAL ERROR during distance estimation: {str(e)}")
+                distance_estimate = {"error": f"Error during estimation: {str(e)}"}
     
     # Build response
     response_data = {
