@@ -700,37 +700,76 @@ def clear_cache():
 
 @app.route('/check_rising_stars', methods=['GET'])
 def api_rising_stars():
+    # Log all request parameters for full transparency
+    logging.critical("🔍 FULL REQUEST PARAMETERS:")
+    for key, value in request.args.items():
+        logging.critical(f"Parameter: {key} = {value}")
+    
+    # Retrieve book URL and distance estimation parameter
     book_url = request.args.get("book_url")
     estimate_distance_param = request.args.get("estimate_distance")
     
-    # Add explicit logging to understand parameter processing
-    logging.info(f"Received request for book URL: {book_url}")
-    logging.info(f"Raw estimate_distance parameter: {estimate_distance_param}")
+    # Extremely detailed logging
+    logging.critical(f"🚨 RAW book_url: {book_url}")
+    logging.critical(f"🚨 RAW estimate_distance_param: {estimate_distance_param}")
+    logging.critical(f"🚨 REQUEST FULL ARGS: {dict(request.args)}")
     
-    # Explicitly convert to boolean with multiple checks
-    estimate_distance = (
-        estimate_distance_param is not None and 
-        estimate_distance_param.lower() in ['true', '1', 'yes']
-    )
+    # Multiple methods to determine estimate_distance
+    estimate_distance = False
+    try:
+        # Method 1: Direct string comparison
+        if estimate_distance_param == "true":
+            estimate_distance = True
+        
+        # Method 2: Case-insensitive comparison
+        if estimate_distance_param and estimate_distance_param.lower() == "true":
+            estimate_distance = True
+        
+        # Method 3: Explicit boolean conversion
+        estimate_distance = bool(estimate_distance_param and 
+                                 estimate_distance_param.lower() in ['true', '1', 'yes'])
+        
+        logging.critical(f"🚨 PARSED estimate_distance (Method 1): {estimate_distance}")
+    except Exception as e:
+        logging.critical(f"❌ ERROR parsing estimate_distance: {e}")
     
-    logging.info(f"Processed estimate_distance: {estimate_distance}")
+    # Additional fallback logging
+    logging.critical(f"🚨 FINAL estimate_distance: {estimate_distance}")
 
     if not book_url or "royalroad.com" not in book_url:
         logging.error("❌ Invalid Royal Road URL")
-        return jsonify({"error": "Invalid Royal Road URL", "results": {}, "title": "Unknown Title"}), 400
+        return jsonify({
+            "error": "Invalid Royal Road URL", 
+            "results": {}, 
+            "title": "Unknown Title",
+            "debug_info": {
+                "book_url": book_url,
+                "estimate_distance_param": estimate_distance_param
+            }
+        }), 400
 
     title, book_id, tags = get_title_and_tags(book_url)
 
     if not book_id or not tags:
         logging.error("❌ Failed to retrieve book details")
-        return jsonify({"error": "Failed to retrieve book details", "title": title, "results": {}}), 500
+        return jsonify({
+            "error": "Failed to retrieve book details", 
+            "title": title, 
+            "results": {},
+            "debug_info": {
+                "book_url": book_url,
+                "estimate_distance_param": estimate_distance_param
+            }
+        }), 500
         
     results = check_rising_stars(book_id, tags)
     
     # Distance estimation logic with extensive logging
     distance_estimate = {}
+    logging.critical(f"🚨 DISTANCE ESTIMATION ATTEMPT: {estimate_distance}")
+    
     if estimate_distance:
-        logging.info(f"📏 Distance estimation requested for book: {title}")
+        logging.critical(f"📏 Distance estimation CONFIRMED for book: {title}")
         
         # Get headers for API requests
         headers = {
@@ -742,27 +781,32 @@ def api_rising_stars():
         }
         
         try:
-            logging.info("🔍 Attempting to estimate distance to Main Rising Stars...")
+            logging.critical("🔍 Attempting to estimate distance to Main Rising Stars...")
             distance_estimate = estimate_distance_to_main_rs(book_id, results, tags, headers)
-            logging.info(f"📏 Distance estimation completed successfully")
-            logging.info(f"📏 Distance estimate: {distance_estimate}")
+            logging.critical(f"📏 Distance estimation COMPLETED: {distance_estimate}")
         except Exception as e:
-            logging.exception(f"❌ Error during distance estimation: {str(e)}")
+            logging.critical(f"❌ CRITICAL ERROR during distance estimation: {str(e)}")
             distance_estimate = {"error": f"Error during estimation: {str(e)}"}
     else:
-        logging.warning("⚠️ Distance estimation was NOT requested")
+        logging.critical("⚠️ Distance estimation was EXPLICITLY NOT REQUESTED")
     
     # Build response
     response_data = {
         "title": title, 
         "results": results,
         "book_id": book_id,
-        "tags": tags
+        "tags": tags,
+        "debug_info": {
+            "book_url": book_url,
+            "estimate_distance_param": estimate_distance_param,
+            "parsed_estimate_distance": estimate_distance
+        }
     }
     
     # Add distance estimate if it was requested and generated
     if estimate_distance and distance_estimate:
         response_data["distance_estimate"] = distance_estimate
+        logging.critical("✅ Distance estimate ADDED to response")
     
     return jsonify(response_data)
 
