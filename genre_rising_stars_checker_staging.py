@@ -77,52 +77,23 @@ def get_random_delay():
     return random.uniform(3.0, 5.0)
 
 
-def fetch_with_retries(url, headers, max_retries=4, base_delay=2, max_delay=30):
-    """Fetches a URL with retry logic, exponential backoff, and human-like behavior."""
-    delay = base_delay  # Initial delay in seconds
-    scraper = get_scraper()  # Get a fresh scraper for each request
-    
+def fetch_with_retries(url, headers, max_retries=3):
+    """Fetches a URL with retry logic and exponential backoff."""
+    delay = 2  # Initial delay in seconds
+
     for attempt in range(max_retries):
         try:
-            # Log request attempt with clear emoji
-            logging.info(f"🔄 Attempt {attempt + 1}/{max_retries}: Fetching {url}")
-            
-            # Add randomized delay between requests to avoid detection
-            if attempt > 0:
-                time.sleep(delay + get_random_delay())
-            
-            # Make the request with timeout
-            response = scraper.get(url, headers=headers, timeout=20)
-            
-            # Check if response is valid
-            response.raise_for_status()
-            
-            # Verify we got actual content and not a CAPTCHA page
-            content = response.text
-            if "captcha" in content.lower() or len(content) < 500:
-                raise Exception("Possible CAPTCHA page or empty response detected")
-            
-            # Short delay to mimic reading the page
-            time.sleep(get_random_delay() / 2)
-            
-            # Log success
-            logging.info(f"✅ Successfully fetched data from {url}")
-            
-            return response
-            
+            logging.info(f"🔄 Attempt {attempt + 1}: Fetching {url}")
+            response = scraper.get(url, headers=headers, timeout=30)
+            response.raise_for_status()  # Raise error for HTTP 4xx/5xx status codes
+            return response  # Return response if successful
         except Exception as e:
-            error_type = type(e).__name__
-            logging.error(f"❌ Request failed (attempt {attempt + 1}/{max_retries}): {error_type}: {e}")
-            
+            logging.error(f"❌ Request failed (attempt {attempt + 1}): {e}")
             if attempt < max_retries - 1:
-                # Exponential backoff with jitter
-                jitter = random.uniform(0, 1)
-                delay = min(max_delay, delay * 2 + jitter)  # Cap at max_delay
-                logging.info(f"⏱️ Retrying in {delay:.2f} seconds...")
+                time.sleep(delay)
+                delay *= 2  # Exponential backoff
             else:
-                logging.error(f"❌ Completely failed to fetch {url} after {max_retries} attempts")
-                raise
-
+                raise Exception("Failed to fetch data after multiple attempts.")
 
 def get_title_and_tags(book_url, book_id=None):
     """Extracts book title, ID, and tags from a Royal Road book page."""
@@ -598,43 +569,19 @@ def estimate_distance_to_main_rs(book_id, genre_results, tags, headers):
         return {"error": f"Error estimating distance: {str(e)}"}
 
 
-def check_rising_stars(book_id, tags, start_index=0):
+    def check_rising_stars(book_id, tags):
     """Checks if the book appears in the main and genre-specific Rising Stars lists."""
     results = {}
-    
-    # Check cache first
-    cache_key = f"rising_stars_{book_id}"
-    with cache_lock:
-        if cache_key in cache:
-            logging.info(f"📋 Cache hit for rising stars data for book ID {book_id}")
-            return cache[cache_key], len(tags)
 
     # Check the Main Rising Stars list first
     try:
-        headers = {
-            "User-Agent": random.choice(USER_AGENTS),
-            "Accept": "text/html,application/xhtml+xml,application/xml",
-            "Accept-Language": "en-US,en;q=0.9",
-            "Referer": "https://www.royalroad.com/",
-            "DNT": "1"
-        }
-        
-        logging.info("🔍 Checking Main Rising Stars list...")
+        headers = {"User-Agent": random.choice(USER_AGENTS)}
+        logging.info("Checking Main Rising Stars list...")
 
         response = fetch_with_retries(MAIN_RISING_STARS_URL, headers)
 
-        soup = BeautifulSoup(response.text, 'html.parser')
-        
-        # More robust book ID extraction
-        book_links = soup.find_all("a", class_="font-red-sunglo")
-        book_ids = []
-        for link in book_links:
-            try:
-                link_parts = link.get('href', '').split('/')
-                if len(link_parts) >= 3:
-                    book_ids.append(link_parts[2])
-            except Exception as e:
-                logging.warning(f"⚠️ Error extracting book ID from link: {e}")
+        soup = BeautifulSoup(response.text, "html.parser")
+        book_ids = [a["href"].split("/")[2] for a in soup.find_all("a", class_="font-red-sunglo bold")]
 
         if book_id in book_ids:
             position = book_ids.index(book_id) + 1
@@ -645,72 +592,32 @@ def check_rising_stars(book_id, tags, start_index=0):
             logging.info(f"❌ Book {book_id} not found in Main Rising Stars")
 
     except Exception as e:
-        logging.exception(f"⚠️ Failed to check Main Rising Stars: {str(e)}")
-        results["Main Rising Stars"] = f"⚠️ Failed to check: {str(e)}"
+        logging.exception("⚠️ Failed to check Main Rising Stars")
+        results["Main Rising Stars"] = f"⚠️ Failed to check: {e}"
 
-    # Check each genre's Rising Stars page starting from the given index
-    for tag in tags[start_index:]:
-        max_attempts = 3
-        for attempt in range(max_attempts):
-            try:
-                url = f"{GENRE_RISING_STARS_URL}{tag}"
-                logging.info(f"🔍 Checking Rising Stars for genre: {tag} (Attempt {attempt + 1}/{max_attempts})")
-                
-                # Add a small, controlled delay between requests
-                if attempt > 0:
-                    time.sleep(attempt * 2)  # Exponential backoff
-                
-                try:
-                    response = fetch_with_retries(url, headers, max_retries=1)  # Reduce retries for individual attempts
-                except Exception as fetch_error:
-                    logging.warning(f"⚠️ Fetch error for {tag} (Attempt {attempt + 1}): {fetch_error}")
-                    
-                    # If this is the last attempt, record the failure
-                    if attempt == max_attempts - 1:
-                        results[tag] = f"⚠️ Failed to fetch list after {max_attempts} attempts: {fetch_error}"
-                        return results, tags.index(tag)
-                    
-                    continue  # Try again
+    # Check each genre's Rising Stars page
+    for tag in tags:
+        url = f"{GENRE_RISING_STARS_URL}{tag}"
+        try:
+            logging.info(f"Checking Rising Stars for genre: {tag}")
+            response = fetch_with_retries(url, headers)
 
-                soup = BeautifulSoup(response.text, 'html.parser')
-                
-                # More robust book ID extraction
-                book_links = soup.find_all("a", class_="font-red-sunglo")
-                book_ids = []
-                for link in book_links:
-                    try:
-                        link_parts = link.get('href', '').split('/')
-                        if len(link_parts) >= 3:
-                            book_ids.append(link_parts[2])
-                    except Exception as e:
-                        logging.warning(f"⚠️ Error extracting book ID from link in {tag}: {e}")
+            soup = BeautifulSoup(response.text, "html.parser")
+            book_ids = [a["href"].split("/")[2] for a in soup.find_all("a", class_="font-red-sunglo bold")]
 
-                if book_id in book_ids:
-                    position = book_ids.index(book_id) + 1
-                    results[tag] = f"✅ Found in position #{position}"
-                    logging.info(f"✅ Book {book_id} found in {tag} at position {position}")
-                    break  # Successfully found, exit retry loop
-                else:
-                    results[tag] = f"❌ Not found in '{tag}' Rising Stars list"
-                    logging.info(f"❌ Book {book_id} not found in {tag}")
-                    break  # Definitive result, exit retry loop
+            if book_id in book_ids:
+                position = book_ids.index(book_id) + 1
+                results[tag] = f"✅ Found in position #{position}"
+                logging.info(f"✅ Book {book_id} found in {tag} at position {position}")
+            else:
+                results[tag] = f"❌ Not found in '{tag}' Rising Stars list"
+                logging.info(f"❌ Book {book_id} not found in {tag}")
 
-            except Exception as e:
-                # Catch any unexpected errors for this specific tag
-                logging.exception(f"⚠️ Unexpected error checking {tag} Rising Stars (Attempt {attempt + 1}): {str(e)}")
-                
-                # If this is the last attempt, record the final error
-                if attempt == max_attempts - 1:
-                    results[tag] = f"⚠️ Unexpected error after {max_attempts} attempts: {str(e)}"
-                    return results, tags.index(tag)
-                
-                continue  # Try again
+        except Exception as e:
+            logging.exception(f"⚠️ Failed to check {tag} Rising Stars")
+            results[tag] = f"⚠️ Failed to check: {e}"
 
-    # Store results in cache
-    with cache_lock:
-        cache[cache_key] = results
-        
-    return results, len(tags)
+    return results
 
 @app.route('/health', methods=['GET'])
 def health_check():
