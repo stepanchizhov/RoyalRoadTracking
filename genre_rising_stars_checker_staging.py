@@ -598,7 +598,7 @@ def estimate_distance_to_main_rs(book_id, genre_results, tags, headers):
         return {"error": f"Error estimating distance: {str(e)}"}
 
 
-def check_rising_stars(book_id, tags):
+def check_rising_stars(book_id, tags, start_index=0):
     """Checks if the book appears in the main and genre-specific Rising Stars lists."""
     results = {}
     
@@ -648,8 +648,8 @@ def check_rising_stars(book_id, tags):
         logging.exception(f"⚠️ Failed to check Main Rising Stars: {str(e)}")
         results["Main Rising Stars"] = f"⚠️ Failed to check: {str(e)}"
 
-    # Check each genre's Rising Stars page
-    for tag in tags:
+    # Check each genre's Rising Stars page starting from the given index
+    for tag in tags[start_index:]:
         try:
             url = f"{GENRE_RISING_STARS_URL}{tag}"
             logging.info(f"🔍 Checking Rising Stars for genre: {tag}")
@@ -662,7 +662,9 @@ def check_rising_stars(book_id, tags):
             except Exception as fetch_error:
                 logging.warning(f"⚠️ Failed to fetch {tag} Rising Stars: {fetch_error}")
                 results[tag] = f"⚠️ Failed to fetch list: {fetch_error}"
-                continue  # Continue to next tag even if this one fails
+                
+                # Return partial results and the index of the failed tag
+                return results, tags.index(tag)
 
             soup = BeautifulSoup(response.text, 'html.parser')
             
@@ -689,13 +691,15 @@ def check_rising_stars(book_id, tags):
             # Catch any unexpected errors for this specific tag
             logging.exception(f"⚠️ Unexpected error checking {tag} Rising Stars: {str(e)}")
             results[tag] = f"⚠️ Unexpected error: {str(e)}"
-            # Continue to next tag even if this one completely fails
+            
+            # Return partial results and the index of the failed tag
+            return results, tags.index(tag)
 
     # Store results in cache
     with cache_lock:
         cache[cache_key] = results
         
-    return results
+    return results, len(tags)
 
 @app.route('/health', methods=['GET'])
 def health_check():
@@ -723,38 +727,38 @@ def clear_cache():
 
 @app.route('/check_rising_stars', methods=['GET'])
 def api_rising_stars():
-    # Log all request parameters for full transparency
-    logging.critical("🔍 FULL REQUEST PARAMETERS:")
-    for key, value in request.args.items():
-        logging.critical(f"Parameter: {key} = {value}")
+    # ... (previous logging and parameter parsing code remains the same)
+
+    title, book_id, tags = get_title_and_tags(book_url)
+
+    if not book_id or not tags:
+        logging.error("❌ Failed to retrieve book details")
+        return jsonify({
+            "error": "Failed to retrieve book details", 
+            "title": title, 
+            "results": {},
+            "debug_info": {
+                "book_url": book_url,
+                "estimate_distance_param": estimate_distance_param
+            }
+        }), 500
     
-    # Retrieve book URL and distance estimation parameter
-    book_url = request.args.get("book_url")
-    estimate_distance_param = request.args.get("estimate_distance")
-    
-    # Extremely detailed logging
-    logging.critical(f"🚨 RAW book_url: {book_url}")
-    logging.critical(f"🚨 RAW estimate_distance_param: {estimate_distance_param}")
-    logging.critical(f"🚨 REQUEST FULL ARGS: {dict(request.args)}")
-    
-    # Multiple methods to determine estimate_distance
-    estimate_distance = False
-    try:
-        # Method 1: Direct string comparison
-        if estimate_distance_param == "true":
-            estimate_distance = True
-        
-        # Method 2: Case-insensitive comparison
-        if estimate_distance_param and estimate_distance_param.lower() == "true":
-            estimate_distance = True
-        
-        # Method 3: Explicit boolean conversion
-        estimate_distance = bool(estimate_distance_param and 
-                                 estimate_distance_param.lower() in ['true', '1', 'yes'])
-        
-        logging.critical(f"🚨 PARSED estimate_distance (Method 1): {estimate_distance}")
-    except Exception as e:
-        logging.critical(f"❌ ERROR parsing estimate_distance: {e}")
+    # New approach to handle partial results
+    start_index = 0
+    while start_index < len(tags):
+        try:
+            results, next_index = check_rising_stars(book_id, tags, start_index)
+            
+            # If all tags were processed, break the loop
+            if next_index == len(tags):
+                break
+            
+            # If a tag failed, update start_index and continue
+            start_index = next_index
+        except Exception as e:
+            logging.exception(f"❌ Critical error during rising stars check: {str(e)}")
+            results = {"error": f"Critical error: {str(e)}"}
+            break
     
     # Additional fallback logging
     logging.critical(f"🚨 FINAL estimate_distance: {estimate_distance}")
