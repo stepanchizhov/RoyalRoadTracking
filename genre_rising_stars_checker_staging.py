@@ -91,21 +91,16 @@ def fetch_with_retries(url, headers, max_retries=4, base_delay=2, max_delay=30):
             if attempt > 0:
                 time.sleep(delay + get_random_delay())
             
-            # Make the request with timeout and stream option
-            response = scraper.get(url, headers=headers, timeout=20, stream=True)  # Increased timeout
+            # Make the request with timeout
+            response = scraper.get(url, headers=headers, timeout=20)
             
             # Check if response is valid
             response.raise_for_status()
             
             # Verify we got actual content and not a CAPTCHA page
-            # Use a content preview to avoid loading entire response into memory
-            content_preview = response.raw.read(1000)
-            if b"captcha" in content_preview.lower() or len(content_preview) < 500:
+            content = response.text
+            if "captcha" in content.lower() or len(content) < 500:
                 raise Exception("Possible CAPTCHA page or empty response detected")
-            
-            # Reset the stream to the beginning for further reading
-            response.raw.decode_content = True
-            response.raw.seek(0)
             
             # Short delay to mimic reading the page
             time.sleep(get_random_delay() / 2)
