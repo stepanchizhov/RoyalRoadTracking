@@ -8,7 +8,9 @@ import random
 import time
 import cachetools
 import threading
+import concurrent.futures
 from datetime import datetime, timedelta
+import os
 
 # Enhanced logging with timestamps and thread info
 logging.basicConfig(
@@ -37,6 +39,12 @@ USER_AGENTS = [
 # Base URLs
 MAIN_RISING_STARS_URL = "https://www.royalroad.com/fictions/rising-stars"
 GENRE_RISING_STARS_URL = "https://www.royalroad.com/fictions/rising-stars?genre="
+
+# Max tags to check (to prevent timeouts)
+MAX_TAGS_TO_CHECK = 6
+
+# Reduced request timeout
+REQUEST_TIMEOUT = 15  # seconds
 
 # Initialize Cloudscraper with more browser options for better anti-bot avoidance
 def get_scraper():
@@ -73,13 +81,13 @@ def extract_book_id(book_url):
 
 
 def get_random_delay():
-    """Returns a random delay between 1-3 seconds to mimic human behavior."""
-    return random.uniform(1.0, 3.0)
+    """Returns a random delay between 0.5-1.5 seconds to mimic human behavior."""
+    return random.uniform(0.5, 1.5)  # Reduced delay
 
 
-def fetch_with_retries(url, headers, max_retries=4):
+def fetch_with_retries(url, headers, max_retries=3):  # Reduced max retries
     """Fetches a URL with retry logic, exponential backoff, and human-like behavior."""
-    delay = 2  # Initial delay in seconds
+    delay = 1  # Initial delay in seconds (reduced)
     scraper = get_scraper()  # Get a fresh scraper for each request
     
     for attempt in range(max_retries):
@@ -92,7 +100,7 @@ def fetch_with_retries(url, headers, max_retries=4):
                 time.sleep(delay + get_random_delay())
             
             # Make the request with timeout
-            response = scraper.get(url, headers=headers, timeout=30)
+            response = scraper.get(url, headers=headers, timeout=REQUEST_TIMEOUT)
             
             # Check if response is valid
             response.raise_for_status()
@@ -101,8 +109,8 @@ def fetch_with_retries(url, headers, max_retries=4):
             if "captcha" in response.text.lower() or len(response.text) < 500:
                 raise Exception("Possible CAPTCHA page or empty response detected")
             
-            # Short delay to mimic reading the page
-            time.sleep(get_random_delay() / 2)
+            # Short delay to mimic reading the page (reduced)
+            time.sleep(get_random_delay() / 4)
             
             # Log success
             logging.info(f"✅ Successfully fetched data from {url}")
@@ -115,8 +123,8 @@ def fetch_with_retries(url, headers, max_retries=4):
             
             if attempt < max_retries - 1:
                 # Exponential backoff with jitter
-                jitter = random.uniform(0, 1)
-                delay = min(30, delay * 2 + jitter)  # Cap at 30 seconds
+                jitter = random.uniform(0, 0.5)  # Reduced jitter
+                delay = min(15, delay * 2 + jitter)  # Cap at 15 seconds (reduced)
                 logging.info(f"⏱️ Retrying in {delay:.2f} seconds...")
             else:
                 raise Exception(f"Failed to fetch data after {max_retries} attempts: {e}")
@@ -596,78 +604,6 @@ def estimate_distance_to_main_rs(book_id, genre_results, tags, headers):
         return {"error": f"Error estimating distance: {str(e)}"}
 
 
-def check_rising_stars(book_id, tags):
-    """Checks if the book appears in the main and genre-specific Rising Stars lists."""
-    results = {}
-    
-    # Check cache first
-    cache_key = f"rising_stars_{book_id}"
-    with cache_lock:
-        if cache_key in cache:
-            logging.info(f"📋 Cache hit for rising stars data for book ID {book_id}")
-            return cache[cache_key]
-
-    # Check the Main Rising Stars list first
-    try:
-        headers = {
-            "User-Agent": random.choice(USER_AGENTS),
-            "Accept": "text/html,application/xhtml+xml,application/xml",
-            "Accept-Language": "en-US,en;q=0.9",
-            "Referer": "https://www.royalroad.com/",
-            "DNT": "1"
-        }
-        
-        logging.info("🔍 Checking Main Rising Stars list...")
-
-        response = fetch_with_retries(MAIN_RISING_STARS_URL, headers)
-
-        soup = BeautifulSoup(response.text, "html.parser")
-        book_ids = [a["href"].split("/")[2] for a in soup.find_all("a", class_="font-red-sunglo bold")]
-
-        if book_id in book_ids:
-            position = book_ids.index(book_id) + 1
-            results["Main Rising Stars"] = f"✅ Found in position #{position}"
-            logging.info(f"✅ Book {book_id} found in Main Rising Stars at position {position}")
-        else:
-            results["Main Rising Stars"] = "❌ Not found in Main Rising Stars list"
-            logging.info(f"❌ Book {book_id} not found in Main Rising Stars")
-
-    except Exception as e:
-        logging.exception(f"⚠️ Failed to check Main Rising Stars: {str(e)}")
-        results["Main Rising Stars"] = f"⚠️ Failed to check: {str(e)}"
-
-    # Check each genre's Rising Stars page
-    for tag in tags:
-        url = f"{GENRE_RISING_STARS_URL}{tag}"
-        try:
-            logging.info(f"🔍 Checking Rising Stars for genre: {tag}")
-            
-            # Add a small delay between requests to avoid rate limiting
-            time.sleep(get_random_delay())
-            
-            response = fetch_with_retries(url, headers)
-
-            soup = BeautifulSoup(response.text, "html.parser")
-            book_ids = [a["href"].split("/")[2] for a in soup.find_all("a", class_="font-red-sunglo bold")]
-
-            if book_id in book_ids:
-                position = book_ids.index(book_id) + 1
-                results[tag] = f"✅ Found in position #{position}"
-                logging.info(f"✅ Book {book_id} found in {tag} at position {position}")
-            else:
-                results[tag] = f"❌ Not found in '{tag}' Rising Stars list"
-                logging.info(f"❌ Book {book_id} not found in {tag}")
-
-        except Exception as e:
-            logging.exception(f"⚠️ Failed to check {tag} Rising Stars: {str(e)}")
-            results[tag] = f"⚠️ Failed to check: {str(e)}"
-
-    # Store results in cache
-    with cache_lock:
-        cache[cache_key] = results
-        
-    return results
-
 @app.route('/health', methods=['GET'])
 def health_check():
     """Simple health check endpoint."""
@@ -675,7 +611,8 @@ def health_check():
         "status": "healthy",
         "time": datetime.now().isoformat(),
         "cache_size": len(cache),
-        "cache_maxsize": cache.maxsize
+        "cache_maxsize": cache.maxsize,
+        "version": "1.2.0"  # Added version number for tracking deployments
     })
 
 
@@ -683,110 +620,14 @@ def health_check():
 def clear_cache():
     """Endpoint to clear the cache if needed."""
     api_key = request.headers.get('X-API-Key')
-    if not api_key or api_key != "YOUR_SECRET_API_KEY":  # Replace with your actual secret key in production
+    if not api_key or api_key != os.environ.get('API_KEY', 'YOUR_SECRET_API_KEY'):
         return jsonify({"error": "Unauthorized"}), 403
     
     with cache_lock:
         cache.clear()
     
-    return jsonify({"status": "success", "message": "Cache cleared"})
-
-
-@app.route('/check_rising_stars', methods=['GET'])
-def api_rising_stars():
-    book_url = request.args.get("book_url")
-    estimate_distance = request.args.get("estimate_distance", "false").lower() == "true"
-    
-    logging.info(f"Received request for book URL: {book_url}, estimate_distance: {estimate_distance}")
-
-    if not book_url or "royalroad.com" not in book_url:
-        logging.error("❌ Invalid Royal Road URL")
-        return jsonify({"error": "Invalid Royal Road URL", "results": {}, "title": "Unknown Title"}), 400
-
-    title, book_id, tags = get_title_and_tags(book_url)
-
-    if not book_id or not tags:
-        logging.error("❌ Failed to retrieve book details")
-        return jsonify({"error": "Failed to retrieve book details", "title": title, "results": {}}), 500
-        
-    results = check_rising_stars(book_id, tags)
-    
-    # Generate distance estimate if requested
-    distance_estimate = {}
-    if estimate_distance:
-        logging.info(f"📏 Distance estimation requested for book: {title}")
-        
-        # Only run estimation if book is not already in main Rising Stars
-        if results.get("Main Rising Stars", "").startswith("❌"):
-            logging.info(f"📏 Book not in Main Rising Stars, starting estimation...")
-            
-            # Get headers for API requests
-            headers = {
-                "User-Agent": random.choice(USER_AGENTS),
-                "Accept": "text/html,application/xhtml+xml,application/xml",
-                "Accept-Language": "en-US,en;q=0.9",
-                "Referer": "https://www.royalroad.com/",
-                "DNT": "1"
-            }
-            
-            try:
-                distance_estimate = estimate_distance_to_main_rs(book_id, results, tags, headers)
-                logging.info(f"📏 Distance estimation completed")
-            except Exception as e:
-                logging.exception(f"❌ Error during distance estimation: {str(e)}")
-                distance_estimate = {"error": f"Error during estimation: {str(e)}"}
-        else:
-            distance_estimate = {
-                "message": "Book is already in the Main Rising Stars list",
-                "status": "ALREADY_IN_LIST"
-            }
-            logging.info(f"📏 Book already in Main Rising Stars, no estimation needed")
-    
-    # Build response
-    response_data = {
-        "title": title, 
-        "results": results,
-        "book_id": book_id,
-        "tags": tags
-    }
-    
-    # Add distance estimate if it was requested
-    if estimate_distance:
-        response_data["distance_estimate"] = distance_estimate
-    
-    return jsonify(response_data)
-
-# Function to periodically clean up cache (optional, for long-running servers)
-def cache_cleanup():
-    """Clean up expired cache entries to free memory."""
-    while True:
-        time.sleep(3600)  # Run every hour
-        try:
-            with cache_lock:
-                # Note: TTLCache automatically removes expired entries on access,
-                # but this forces a cleanup even without access
-                old_size = len(cache)
-                for key in list(cache.keys()):
-                    # Just accessing each key will trigger TTLCache's cleanup mechanism
-                    _ = cache.get(key)
-                current_size = len(cache)
-                
-                if old_size > current_size:
-                    logging.info(f"🧹 Cache cleanup: removed {old_size - current_size} expired entries")
-        except Exception as e:
-            logging.error(f"❌ Error during cache cleanup: {e}")
-
-
-if __name__ == '__main__':
-    import os
-    
-    # Start cache cleanup in a background thread
-    cleanup_thread = threading.Thread(target=cache_cleanup, daemon=True)
-    cleanup_thread.start()
-    
-    # Get port from environment variable, default to 10000
-    PORT = int(os.environ.get("PORT", 10000))
-    
-    # Start the Flask app
-    logging.info(f"🚀 Starting server on port {PORT}")
-    app.run(host="0.0.0.0", port=PORT, debug=True)
+    return jsonify({
+        "status": "success", 
+        "message": "Cache cleared",
+        "timestamp": datetime.now().isoformat()
+    })
