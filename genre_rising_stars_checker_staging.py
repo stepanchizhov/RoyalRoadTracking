@@ -701,9 +701,19 @@ def clear_cache():
 @app.route('/check_rising_stars', methods=['GET'])
 def api_rising_stars():
     book_url = request.args.get("book_url")
-    estimate_distance = request.args.get("estimate_distance", "false").lower() == "true"
+    estimate_distance_param = request.args.get("estimate_distance")
     
-    logging.info(f"Received request for book URL: {book_url}, estimate_distance: {estimate_distance}")
+    # Add explicit logging to understand parameter processing
+    logging.info(f"Received request for book URL: {book_url}")
+    logging.info(f"Raw estimate_distance parameter: {estimate_distance_param}")
+    
+    # Explicitly convert to boolean with multiple checks
+    estimate_distance = (
+        estimate_distance_param is not None and 
+        estimate_distance_param.lower() in ['true', '1', 'yes']
+    )
+    
+    logging.info(f"Processed estimate_distance: {estimate_distance}")
 
     if not book_url or "royalroad.com" not in book_url:
         logging.error("❌ Invalid Royal Road URL")
@@ -717,7 +727,7 @@ def api_rising_stars():
         
     results = check_rising_stars(book_id, tags)
     
-    # Distance estimation logic
+    # Distance estimation logic with extensive logging
     distance_estimate = {}
     if estimate_distance:
         logging.info(f"📏 Distance estimation requested for book: {title}")
@@ -732,12 +742,15 @@ def api_rising_stars():
         }
         
         try:
-            # Always try to estimate distance, not just when not in Main Rising Stars
+            logging.info("🔍 Attempting to estimate distance to Main Rising Stars...")
             distance_estimate = estimate_distance_to_main_rs(book_id, results, tags, headers)
-            logging.info(f"📏 Distance estimation completed")
+            logging.info(f"📏 Distance estimation completed successfully")
+            logging.info(f"📏 Distance estimate: {distance_estimate}")
         except Exception as e:
             logging.exception(f"❌ Error during distance estimation: {str(e)}")
             distance_estimate = {"error": f"Error during estimation: {str(e)}"}
+    else:
+        logging.warning("⚠️ Distance estimation was NOT requested")
     
     # Build response
     response_data = {
@@ -747,8 +760,8 @@ def api_rising_stars():
         "tags": tags
     }
     
-    # Add distance estimate if it was requested
-    if estimate_distance:
+    # Add distance estimate if it was requested and generated
+    if estimate_distance and distance_estimate:
         response_data["distance_estimate"] = distance_estimate
     
     return jsonify(response_data)
