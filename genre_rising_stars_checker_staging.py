@@ -650,50 +650,61 @@ def check_rising_stars(book_id, tags, start_index=0):
 
     # Check each genre's Rising Stars page starting from the given index
     for tag in tags[start_index:]:
-        try:
-            url = f"{GENRE_RISING_STARS_URL}{tag}"
-            logging.info(f"🔍 Checking Rising Stars for genre: {tag}")
-            
-            # Add a small delay between requests to avoid rate limiting
-            time.sleep(get_random_delay())
-            
+        max_attempts = 3
+        for attempt in range(max_attempts):
             try:
-                response = fetch_with_retries(url, headers, max_retries=3)  # Reduced max retries
-            except Exception as fetch_error:
-                logging.warning(f"⚠️ Failed to fetch {tag} Rising Stars: {fetch_error}")
-                results[tag] = f"⚠️ Failed to fetch list: {fetch_error}"
+                url = f"{GENRE_RISING_STARS_URL}{tag}"
+                logging.info(f"🔍 Checking Rising Stars for genre: {tag} (Attempt {attempt + 1}/{max_attempts})")
                 
-                # Return partial results and the index of the failed tag
-                return results, tags.index(tag)
-
-            soup = BeautifulSoup(response.text, 'html.parser')
-            
-            # More robust book ID extraction
-            book_links = soup.find_all("a", class_="font-red-sunglo")
-            book_ids = []
-            for link in book_links:
+                # Add a small, controlled delay between requests
+                if attempt > 0:
+                    time.sleep(attempt * 2)  # Exponential backoff
+                
                 try:
-                    link_parts = link.get('href', '').split('/')
-                    if len(link_parts) >= 3:
-                        book_ids.append(link_parts[2])
-                except Exception as e:
-                    logging.warning(f"⚠️ Error extracting book ID from link in {tag}: {e}")
+                    response = fetch_with_retries(url, headers, max_retries=1)  # Reduce retries for individual attempts
+                except Exception as fetch_error:
+                    logging.warning(f"⚠️ Fetch error for {tag} (Attempt {attempt + 1}): {fetch_error}")
+                    
+                    # If this is the last attempt, record the failure
+                    if attempt == max_attempts - 1:
+                        results[tag] = f"⚠️ Failed to fetch list after {max_attempts} attempts: {fetch_error}"
+                        return results, tags.index(tag)
+                    
+                    continue  # Try again
 
-            if book_id in book_ids:
-                position = book_ids.index(book_id) + 1
-                results[tag] = f"✅ Found in position #{position}"
-                logging.info(f"✅ Book {book_id} found in {tag} at position {position}")
-            else:
-                results[tag] = f"❌ Not found in '{tag}' Rising Stars list"
-                logging.info(f"❌ Book {book_id} not found in {tag}")
+                soup = BeautifulSoup(response.text, 'html.parser')
+                
+                # More robust book ID extraction
+                book_links = soup.find_all("a", class_="font-red-sunglo")
+                book_ids = []
+                for link in book_links:
+                    try:
+                        link_parts = link.get('href', '').split('/')
+                        if len(link_parts) >= 3:
+                            book_ids.append(link_parts[2])
+                    except Exception as e:
+                        logging.warning(f"⚠️ Error extracting book ID from link in {tag}: {e}")
 
-        except Exception as e:
-            # Catch any unexpected errors for this specific tag
-            logging.exception(f"⚠️ Unexpected error checking {tag} Rising Stars: {str(e)}")
-            results[tag] = f"⚠️ Unexpected error: {str(e)}"
-            
-            # Return partial results and the index of the failed tag
-            return results, tags.index(tag)
+                if book_id in book_ids:
+                    position = book_ids.index(book_id) + 1
+                    results[tag] = f"✅ Found in position #{position}"
+                    logging.info(f"✅ Book {book_id} found in {tag} at position {position}")
+                    break  # Successfully found, exit retry loop
+                else:
+                    results[tag] = f"❌ Not found in '{tag}' Rising Stars list"
+                    logging.info(f"❌ Book {book_id} not found in {tag}")
+                    break  # Definitive result, exit retry loop
+
+            except Exception as e:
+                # Catch any unexpected errors for this specific tag
+                logging.exception(f"⚠️ Unexpected error checking {tag} Rising Stars (Attempt {attempt + 1}): {str(e)}")
+                
+                # If this is the last attempt, record the final error
+                if attempt == max_attempts - 1:
+                    results[tag] = f"⚠️ Unexpected error after {max_attempts} attempts: {str(e)}"
+                    return results, tags.index(tag)
+                
+                continue  # Try again
 
     # Store results in cache
     with cache_lock:
