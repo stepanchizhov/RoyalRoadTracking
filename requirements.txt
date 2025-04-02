@@ -1,6 +1,7 @@
-flask
-flask_cors
-requests
-beautifulsoup4
-gunicorn
-cloudscraper
+flask==2.2.3
+flask-cors==3.0.10
+beautifulsoup4==4.12.2
+cloudscraper==1.2.71
+gunicorn==20.1.0
+cachetools==5.3.1
+requests==2.31.0
