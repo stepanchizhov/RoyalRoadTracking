@@ -344,62 +344,66 @@ def process_genre_estimate(genre_name, genre_position, main_rs_books, headers):
         
         genre_estimate = {}
         if genre_top_book_main_position and main_rs_bottom_with_tag:
-            # Calculate scaling factor
-            genre_bottom_position = next(
-                (b["position"] for b in genre_books if b["book_id"] == main_rs_bottom_with_tag["book_id"]),
-                len(genre_books)  # Assume it would be at the bottom if not found
-            )
+            # Find the bottom/worst book's position in the genre list
+            genre_bottom_book_id = main_rs_bottom_with_tag["book_id"]
+            genre_bottom_position = None
+            
+            # Try to find the bottom book's position in the genre list
+            for book in genre_books:
+                if book["book_id"] == genre_bottom_book_id:
+                    genre_bottom_position = book["position"]
+                    break
+            
+            # If not found in the genre list, it must be lower than the lowest book in the genre list
+            if genre_bottom_position is None:
+                genre_bottom_position = len(genre_books) + 1
             
             # Print all the intermediate findings
             logging.info(f"📊 GENRE ANALYSIS: {genre_name}")
-            logging.info(f"📊 Book position: #{genre_position}")
+            logging.info(f"📊 Book position in {genre_name}: #{genre_position}")
             logging.info(f"📊 Top book from {genre_name}: {genre_top_book['title']} (ID: {genre_top_book['book_id']})")
             logging.info(f"📊 Top book position on Main RS: #{genre_top_book_main_position}")
             logging.info(f"📊 Bottom book from Main RS with {genre_name} tag: {main_rs_bottom_with_tag['title']} (pos #{main_rs_bottom_with_tag['position']})")
+            logging.info(f"📊 Bottom book position in {genre_name} list: {genre_bottom_position}")
             
-            if genre_bottom_position > genre_position:
-                # Calculate how many positions between top and bottom books
-                main_rs_span = main_rs_bottom_with_tag["position"] - genre_top_book_main_position
-                genre_rs_span = genre_bottom_position - 1  # 1 is the top position
+            # Calculate scaling factor based on the positions we have
+            main_rs_span = main_rs_bottom_with_tag["position"] - genre_top_book_main_position
+            if main_rs_span <= 0:
+                main_rs_span = 1  # Minimum span to avoid division by zero
                 
-                # Calculate scaling factor (how many main RS positions per genre position)
-                scaling_factor = main_rs_span / genre_rs_span if genre_rs_span > 0 else 1
-                
-                # Calculate estimated positions to Main RS
-                positions_to_scale = genre_position - 1  # Distance from top
-                estimated_distance = int(positions_to_scale * scaling_factor)
-                estimated_position = genre_top_book_main_position + estimated_distance
-                
-                genre_estimate = {
-                    "genre": genre_name,
-                    "book_genre_position": genre_position,
-                    "top_book_main_position": genre_top_book_main_position,
-                    "bottom_tag_book_main_position": main_rs_bottom_with_tag["position"],
-                    "bottom_tag_book_genre_position": genre_bottom_position,
-                    "scaling_factor": scaling_factor,
-                    "estimated_distance": estimated_distance,
-                    "estimated_position": estimated_position,
-                    "main_rs_size": len(main_rs_books),
-                    "positions_away_from_bottom": max(0, len(main_rs_books) - estimated_position)
-                }
-                
-                # Log the estimate
-                logging.info(f"📊 ESTIMATE: Book would be around position #{estimated_position} on Main RS")
-                logging.info(f"📊 This is {estimated_distance} positions away from the top book of {genre_name}")
-                if estimated_position <= len(main_rs_books):
-                    logging.info(f"📊 The book is estimated to be IN the Main Rising Stars list!")
-                else:
-                    positions_away = estimated_position - len(main_rs_books)
-                    logging.info(f"📊 The book is estimated to be {positions_away} positions away from joining Main Rising Stars")
+            genre_rs_span = genre_bottom_position - 1  # 1 is the top position
+            if genre_rs_span <= 0:
+                genre_rs_span = 1  # Minimum span to avoid division by zero
+            
+            # Calculate scaling factor (how many main RS positions per genre position)
+            scaling_factor = main_rs_span / genre_rs_span
+            
+            # Calculate estimated positions to Main RS
+            positions_to_scale = genre_position - 1  # Distance from top
+            estimated_distance = max(1, int(positions_to_scale * scaling_factor))
+            estimated_position = genre_top_book_main_position + estimated_distance
+            
+            genre_estimate = {
+                "genre": genre_name,
+                "book_genre_position": genre_position,
+                "top_book_main_position": genre_top_book_main_position,
+                "bottom_tag_book_main_position": main_rs_bottom_with_tag["position"],
+                "bottom_tag_book_genre_position": genre_bottom_position,
+                "scaling_factor": scaling_factor,
+                "estimated_distance": estimated_distance,
+                "estimated_position": estimated_position,
+                "main_rs_size": len(main_rs_books),
+                "positions_away_from_bottom": max(0, len(main_rs_books) - estimated_position)
+            }
+            
+            # Log the estimate
+            logging.info(f"📊 ESTIMATE: Book would be around position #{estimated_position} on Main RS")
+            logging.info(f"📊 This is {estimated_distance} positions away from the top book of {genre_name}")
+            if estimated_position <= len(main_rs_books):
+                logging.info(f"📊 The book is estimated to be IN the Main Rising Stars list!")
             else:
-                genre_estimate = {
-                    "message": f"Book is already higher than the lowest {genre_name} book on Main RS",
-                    "genre": genre_name,
-                    "book_genre_position": genre_position,
-                    "top_book_main_position": genre_top_book_main_position,
-                    "bottom_tag_book_main_position": main_rs_bottom_with_tag["position"],
-                    "main_rs_size": len(main_rs_books)
-                }
+                positions_away = estimated_position - len(main_rs_books)
+                logging.info(f"📊 The book is estimated to be {positions_away} positions away from joining Main Rising Stars")
         else:
             genre_estimate = {
                 "message": f"Could not find enough reference books to make an estimate from {genre_name}",
@@ -454,6 +458,11 @@ def create_combined_estimate(best_estimate, worst_estimate, main_rs_size):
         
         combined_estimate["estimated_position"] = best_estimate["estimated_position"]
         combined_estimate["best_genre_estimate"] = best_estimate["estimated_position"]
+        combined_estimate["main_rs_size"] = main_rs_size
+    else:
+        # No valid estimates available
+        combined_estimate["status"] = "UNKNOWN"
+        combined_estimate["message"] = "Could not calculate a position estimate with the available data"
         combined_estimate["main_rs_size"] = main_rs_size
     
     return combined_estimate
