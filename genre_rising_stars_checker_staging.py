@@ -650,8 +650,8 @@ def check_rising_stars(book_id, tags):
 
     # Check each genre's Rising Stars page
     for tag in tags:
-        url = f"{GENRE_RISING_STARS_URL}{tag}"
         try:
+            url = f"{GENRE_RISING_STARS_URL}{tag}"
             logging.info(f"🔍 Checking Rising Stars for genre: {tag}")
             
             # Add a small delay between requests to avoid rate limiting
@@ -662,7 +662,7 @@ def check_rising_stars(book_id, tags):
             except Exception as fetch_error:
                 logging.warning(f"⚠️ Failed to fetch {tag} Rising Stars: {fetch_error}")
                 results[tag] = f"⚠️ Failed to fetch list: {fetch_error}"
-                continue
+                continue  # Continue to next tag even if this one fails
 
             soup = BeautifulSoup(response.text, 'html.parser')
             
@@ -686,8 +686,10 @@ def check_rising_stars(book_id, tags):
                 logging.info(f"❌ Book {book_id} not found in {tag}")
 
         except Exception as e:
-            logging.exception(f"⚠️ Failed to check {tag} Rising Stars: {str(e)}")
-            results[tag] = f"⚠️ Failed to check: {str(e)}"
+            # Catch any unexpected errors for this specific tag
+            logging.exception(f"⚠️ Unexpected error checking {tag} Rising Stars: {str(e)}")
+            results[tag] = f"⚠️ Unexpected error: {str(e)}"
+            # Continue to next tag even if this one completely fails
 
     # Store results in cache
     with cache_lock:
