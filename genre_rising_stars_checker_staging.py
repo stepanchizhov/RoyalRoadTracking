@@ -607,7 +607,7 @@ def check_rising_stars(book_id, tags, start_index=0):
     with cache_lock:
         if cache_key in cache:
             logging.info(f"📋 Cache hit for rising stars data for book ID {book_id}")
-            return cache[cache_key]
+            return cache[cache_key], len(tags)
 
     # Check the Main Rising Stars list first
     try:
