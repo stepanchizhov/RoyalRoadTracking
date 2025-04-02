@@ -577,6 +577,11 @@ def estimate_distance_to_main_rs(book_id, genre_results, tags, headers):
         # Sort genres by the book's position (best to worst)
         sorted_genres = sorted(book_positions.items(), key=lambda x: x[1])
         
+        # Add a human-like delay after initial data gathering
+        human_delay = get_random_delay()
+        logging.info(f"⏳ Human-like delay: waiting {human_delay:.2f} seconds...")
+        time.sleep(human_delay)
+        
         # Find suitable genres for estimation
         suitable_genres = []
         for genre_name, genre_position in sorted_genres:
@@ -609,6 +614,11 @@ def estimate_distance_to_main_rs(book_id, genre_results, tags, headers):
                         logging.info(f"⚠️ Genre {genre_name} has insufficient distance between reference books ({main_distance})")
                 else:
                     logging.info(f"⚠️ Genre {genre_name} has only {len(common_books)} common books")
+            
+            # Add a human-like delay between checking each genre
+            human_delay = get_random_delay()
+            logging.info(f"⏳ Human-like delay: waiting {human_delay:.2f} seconds...")
+            time.sleep(human_delay)
         
         # If we have no suitable genres, use the original sorting
         if not suitable_genres and sorted_genres:
@@ -646,6 +656,11 @@ def estimate_distance_to_main_rs(book_id, genre_results, tags, headers):
             logging.info(f"🔍 Processing {label} genre: {genre_name} at position #{genre_position}")
             genre_estimate = process_genre_estimate(genre_name, genre_position, main_rs_books, headers)
             estimates[f"{label}_genre_estimate"] = genre_estimate
+            
+            # Add a human-like delay between processing each genre
+            human_delay = get_random_delay()
+            logging.info(f"⏳ Human-like delay: waiting {human_delay:.2f} seconds...")
+            time.sleep(human_delay)
         
         # Create a combined estimate
         combined_estimate = create_combined_estimate(
