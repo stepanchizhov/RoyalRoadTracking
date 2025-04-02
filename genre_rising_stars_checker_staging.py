@@ -319,99 +319,130 @@ def get_books_for_genre(genre, headers):
         return []
 
 def process_genre_estimate(genre_name, genre_position, main_rs_books, headers):
-    """Helper function to process a single genre's estimate."""
+    """Helper function to process a single genre's estimate with improved scaling logic."""
     try:
         # Get all books from genre Rising Stars
         genre_books = get_books_for_genre(genre_name, headers)
         if not genre_books:
             return {"error": f"Could not fetch books for {genre_name} Rising Stars"}
         
-        # Find top book (position #1) from genre
-        genre_top_book = next((b for b in genre_books if b["position"] == 1), None)
-        if not genre_top_book:
-            logging.warning(f"⚠️ Could not find top book for {genre_name}")
-            return {"error": f"Could not find top book for {genre_name}"}
-        
-        # Find position of genre's top book on main Rising Stars
-        genre_top_book_main_position = next(
-            (b["position"] for b in main_rs_books if b["book_id"] == genre_top_book["book_id"]), 
-            None
-        )
-        
-        # Find the bottom book with the same tag on main Rising Stars
-        main_rs_with_tag = [b for b in main_rs_books if genre_name in b["tags"]]
-        main_rs_bottom_with_tag = max(main_rs_with_tag, key=lambda x: x["position"]) if main_rs_with_tag else None
-        
-        genre_estimate = {}
-        if genre_top_book_main_position and main_rs_bottom_with_tag:
-            # Find the bottom/worst book's position in the genre list
-            genre_bottom_book_id = main_rs_bottom_with_tag["book_id"]
-            genre_bottom_position = None
-            
-            # Try to find the bottom book's position in the genre list
-            for book in genre_books:
-                if book["book_id"] == genre_bottom_book_id:
-                    genre_bottom_position = book["position"]
+        # Find books that appear in both lists (genre list and main RS)
+        common_books = []
+        for genre_book in genre_books:
+            for main_book in main_rs_books:
+                if genre_book["book_id"] == main_book["book_id"]:
+                    common_books.append({
+                        "book_id": genre_book["book_id"],
+                        "title": genre_book["title"],
+                        "genre_position": genre_book["position"],
+                        "main_position": main_book["position"]
+                    })
                     break
-            
-            # If not found in the genre list, it must be lower than the lowest book in the genre list
-            if genre_bottom_position is None:
-                genre_bottom_position = len(genre_books) + 1
-            
-            # Print all the intermediate findings
-            logging.info(f"📊 GENRE ANALYSIS: {genre_name}")
-            logging.info(f"📊 Book position in {genre_name}: #{genre_position}")
-            logging.info(f"📊 Top book from {genre_name}: {genre_top_book['title']} (ID: {genre_top_book['book_id']})")
-            logging.info(f"📊 Top book position on Main RS: #{genre_top_book_main_position}")
-            logging.info(f"📊 Bottom book from Main RS with {genre_name} tag: {main_rs_bottom_with_tag['title']} (pos #{main_rs_bottom_with_tag['position']})")
-            logging.info(f"📊 Bottom book position in {genre_name} list: {genre_bottom_position}")
-            
-            # Calculate scaling factor based on the positions we have
-            main_rs_span = main_rs_bottom_with_tag["position"] - genre_top_book_main_position
-            if main_rs_span <= 0:
-                main_rs_span = 1  # Minimum span to avoid division by zero
-                
-            genre_rs_span = genre_bottom_position - 1  # 1 is the top position
-            if genre_rs_span <= 0:
-                genre_rs_span = 1  # Minimum span to avoid division by zero
-            
-            # Calculate scaling factor (how many main RS positions per genre position)
-            scaling_factor = main_rs_span / genre_rs_span
-            
-            # Calculate estimated positions to Main RS
-            positions_to_scale = genre_position - 1  # Distance from top
-            estimated_distance = max(1, int(positions_to_scale * scaling_factor))
-            estimated_position = genre_top_book_main_position + estimated_distance
-            
-            genre_estimate = {
+        
+        # If we don't have any common books, we can't make an estimate
+        if not common_books:
+            return {
+                "message": f"No common books found between {genre_name} Rising Stars and Main Rising Stars",
                 "genre": genre_name,
                 "book_genre_position": genre_position,
-                "top_book_main_position": genre_top_book_main_position,
-                "bottom_tag_book_main_position": main_rs_bottom_with_tag["position"],
-                "bottom_tag_book_genre_position": genre_bottom_position,
-                "scaling_factor": scaling_factor,
-                "estimated_distance": estimated_distance,
-                "estimated_position": estimated_position,
-                "main_rs_size": len(main_rs_books),
-                "positions_away_from_bottom": max(0, len(main_rs_books) - estimated_position)
-            }
-            
-            # Log the estimate
-            logging.info(f"📊 ESTIMATE: Book would be around position #{estimated_position} on Main RS")
-            logging.info(f"📊 This is {estimated_distance} positions away from the top book of {genre_name}")
-            if estimated_position <= len(main_rs_books):
-                logging.info(f"📊 The book is estimated to be IN the Main Rising Stars list!")
-            else:
-                positions_away = estimated_position - len(main_rs_books)
-                logging.info(f"📊 The book is estimated to be {positions_away} positions away from joining Main Rising Stars")
-        else:
-            genre_estimate = {
-                "message": f"Could not find enough reference books to make an estimate from {genre_name}",
-                "genre": genre_name,
-                "book_genre_position": genre_position,
-                "top_book_main_position": genre_top_book_main_position,
                 "main_rs_size": len(main_rs_books)
             }
+        
+        # Sort by main position (lowest to highest)
+        common_books_by_main = sorted(common_books, key=lambda x: x["main_position"])
+        
+        # Get the highest and lowest books on main RS
+        highest_on_main = common_books_by_main[0]
+        lowest_on_main = common_books_by_main[-1]
+        
+        # If we only have one common book, we'll use a simple scaling factor
+        if highest_on_main["book_id"] == lowest_on_main["book_id"]:
+            # We only have one reference point
+            reference_book = highest_on_main
+            
+            # Calculate distance from reference book in genre list
+            genre_distance = abs(genre_position - reference_book["genre_position"])
+            
+            # Use the position of the reference book as base for our estimate
+            if genre_position < reference_book["genre_position"]:
+                # Our book is higher in the genre list
+                estimated_position = max(1, reference_book["main_position"] - genre_distance)
+            else:
+                # Our book is lower in the genre list
+                estimated_position = reference_book["main_position"] + genre_distance
+            
+            scaling_factor = 1.0  # Default scaling when we only have one reference
+            
+        else:
+            # Calculate scaling factor using the highest and lowest books
+            main_distance = lowest_on_main["main_position"] - highest_on_main["main_position"]
+            genre_distance = abs(lowest_on_main["genre_position"] - highest_on_main["genre_position"])
+            
+            # Prevent division by zero
+            if genre_distance == 0:
+                genre_distance = 1
+                
+            scaling_factor = main_distance / genre_distance
+            
+            # Calculate our position relative to the highest book on the main list
+            genre_distance_from_highest = abs(genre_position - highest_on_main["genre_position"])
+            
+            # Apply the scaling factor to get estimated main list distance
+            if genre_position < highest_on_main["genre_position"]:
+                # Our book is higher in the genre list
+                estimated_position = max(1, highest_on_main["main_position"] - (genre_distance_from_highest * scaling_factor))
+            else:
+                # Our book is lower in the genre list
+                estimated_position = highest_on_main["main_position"] + (genre_distance_from_highest * scaling_factor)
+        
+        # Round to nearest integer
+        estimated_position = int(round(estimated_position))
+        
+        # Calculate positions away from joining main RS
+        positions_away = max(0, estimated_position - len(main_rs_books))
+        
+        # Log the analysis
+        logging.info(f"📊 DETAILED GENRE ANALYSIS: {genre_name}")
+        logging.info(f"📊 Book position in {genre_name}: #{genre_position}")
+        logging.info(f"📊 Found {len(common_books)} common books between {genre_name} and Main Rising Stars")
+        for i, book in enumerate(common_books_by_main):
+            logging.info(f"📊 Common Book #{i+1}: {book['title']} - Genre #{book['genre_position']}, Main #{book['main_position']}")
+        logging.info(f"📊 Calculated scaling factor: {scaling_factor:.2f}")
+        logging.info(f"📊 Estimated position on Main RS: #{estimated_position}")
+        
+        if positions_away > 0:
+            logging.info(f"📊 Book is estimated to be {positions_away} positions away from joining Main Rising Stars")
+        else:
+            logging.info(f"📊 Book is estimated to be IN the Main Rising Stars list!")
+        
+        # Build the result
+        genre_estimate = {
+            "genre": genre_name,
+            "book_genre_position": genre_position,
+            "scaling_factor": scaling_factor,
+            "estimated_position": estimated_position,
+            "main_rs_size": len(main_rs_books),
+            "common_books_count": len(common_books),
+            "highest_common_book": {
+                "title": highest_on_main["title"],
+                "genre_position": highest_on_main["genre_position"],
+                "main_position": highest_on_main["main_position"]
+            },
+            "lowest_common_book": {
+                "title": lowest_on_main["title"],
+                "genre_position": lowest_on_main["genre_position"],
+                "main_position": lowest_on_main["main_position"]
+            } if highest_on_main["book_id"] != lowest_on_main["book_id"] else None
+        }
+        
+        # Add status information
+        if estimated_position <= len(main_rs_books):
+            genre_estimate["status"] = "IN_RANGE"
+            genre_estimate["message"] = f"Book is estimated to be in the Main Rising Stars at position #{estimated_position}"
+        else:
+            genre_estimate["status"] = "OUTSIDE_RANGE"
+            genre_estimate["message"] = f"Book is estimated to be {positions_away} positions away from joining Main Rising Stars"
+            genre_estimate["positions_away"] = positions_away
         
         return genre_estimate
         
@@ -424,46 +455,106 @@ def process_genre_estimate(genre_name, genre_position, main_rs_books, headers):
         }
 
 def create_combined_estimate(best_estimate, worst_estimate, main_rs_size):
-    """Creates a combined estimate from best and worst genre estimates."""
-    combined_estimate = {}
+    """Creates a combined estimate from best and worst genre estimates with prioritization."""
+    combined_estimate = {"main_rs_size": main_rs_size}
     
-    if "estimated_position" in best_estimate and worst_estimate and "estimated_position" in worst_estimate:
-        # Use the average if we have both estimates
-        combined_position = (best_estimate["estimated_position"] + worst_estimate["estimated_position"]) / 2
-        combined_estimate = {
-            "estimated_position": int(combined_position),
-            "best_genre_estimate": best_estimate["estimated_position"],
-            "worst_genre_estimate": worst_estimate["estimated_position"],
-            "main_rs_size": main_rs_size
-        }
+    # Check if we have valid estimates
+    best_valid = "estimated_position" in best_estimate
+    worst_valid = worst_estimate and "estimated_position" in worst_estimate
+    
+    if not best_valid and not worst_valid:
+        # No valid estimates
+        combined_estimate["status"] = "UNKNOWN"
+        combined_estimate["message"] = "Could not calculate a position estimate with the available data"
+        return combined_estimate
+    
+    # Prioritize estimates based on their proximity to the cutoff and reliability
+    if best_valid and worst_valid:
+        # We have both estimates - check if either one puts the book in range
+        best_in_range = best_estimate.get("status") == "IN_RANGE"
+        worst_in_range = worst_estimate.get("status") == "IN_RANGE"
         
-        if combined_position <= main_rs_size:
+        if best_in_range and not worst_in_range:
+            # Best estimate says it's in range, worst doesn't - prioritize the best
+            combined_estimate["estimated_position"] = best_estimate["estimated_position"]
             combined_estimate["status"] = "IN_RANGE"
-            combined_estimate["message"] = f"Book is estimated to be in the Main Rising Stars at around position #{int(combined_position)}"
+            combined_estimate["message"] = f"Book is estimated to be in the Main Rising Stars at around position #{best_estimate['estimated_position']}"
+            combined_estimate["best_genre_estimate"] = best_estimate["estimated_position"]
+            combined_estimate["worst_genre_estimate"] = worst_estimate["estimated_position"]
+            combined_estimate["prioritized"] = "best"
+            
+        elif worst_in_range and not best_in_range:
+            # Worst estimate says it's in range, best doesn't - prioritize the worst
+            combined_estimate["estimated_position"] = worst_estimate["estimated_position"]
+            combined_estimate["status"] = "IN_RANGE"
+            combined_estimate["message"] = f"Book is estimated to be in the Main Rising Stars at around position #{worst_estimate['estimated_position']}"
+            combined_estimate["best_genre_estimate"] = best_estimate["estimated_position"]
+            combined_estimate["worst_genre_estimate"] = worst_estimate["estimated_position"]
+            combined_estimate["prioritized"] = "worst"
+            
+        elif best_in_range and worst_in_range:
+            # Both estimates say it's in range - use an average
+            combined_position = (best_estimate["estimated_position"] + worst_estimate["estimated_position"]) / 2
+            combined_estimate["estimated_position"] = int(round(combined_position))
+            combined_estimate["status"] = "IN_RANGE"
+            combined_estimate["message"] = f"Book is estimated to be in the Main Rising Stars at around position #{int(round(combined_position))}"
+            combined_estimate["best_genre_estimate"] = best_estimate["estimated_position"]
+            combined_estimate["worst_genre_estimate"] = worst_estimate["estimated_position"]
+            combined_estimate["prioritized"] = "average"
+            
         else:
-            positions_away = int(combined_position - main_rs_size)
-            combined_estimate["status"] = "OUTSIDE_RANGE"
-            combined_estimate["message"] = f"Book is estimated to be {positions_away} positions away from joining Main Rising Stars"
-            combined_estimate["positions_away"] = positions_away
-    elif "estimated_position" in best_estimate:
+            # Neither estimate puts it in range - use the one closest to the cutoff
+            best_distance = abs(best_estimate["estimated_position"] - main_rs_size)
+            worst_distance = abs(worst_estimate["estimated_position"] - main_rs_size)
+            
+            if best_distance <= worst_distance:
+                # Best estimate is closer to the cutoff
+                combined_estimate["estimated_position"] = best_estimate["estimated_position"]
+                combined_estimate["status"] = "OUTSIDE_RANGE"
+                combined_estimate["positions_away"] = max(0, best_estimate["estimated_position"] - main_rs_size)
+                combined_estimate["message"] = f"Book is estimated to be {combined_estimate['positions_away']} positions away from joining Main Rising Stars"
+                combined_estimate["best_genre_estimate"] = best_estimate["estimated_position"]
+                combined_estimate["worst_genre_estimate"] = worst_estimate["estimated_position"]
+                combined_estimate["prioritized"] = "best"
+            else:
+                # Worst estimate is closer to the cutoff
+                combined_estimate["estimated_position"] = worst_estimate["estimated_position"]
+                combined_estimate["status"] = "OUTSIDE_RANGE"
+                combined_estimate["positions_away"] = max(0, worst_estimate["estimated_position"] - main_rs_size)
+                combined_estimate["message"] = f"Book is estimated to be {combined_estimate['positions_away']} positions away from joining Main Rising Stars"
+                combined_estimate["best_genre_estimate"] = best_estimate["estimated_position"]
+                combined_estimate["worst_genre_estimate"] = worst_estimate["estimated_position"]
+                combined_estimate["prioritized"] = "worst"
+    
+    elif best_valid:
         # Only have best genre estimate
+        combined_estimate["estimated_position"] = best_estimate["estimated_position"]
+        combined_estimate["best_genre_estimate"] = best_estimate["estimated_position"]
+        combined_estimate["prioritized"] = "best"
+        
         if best_estimate["estimated_position"] <= main_rs_size:
             combined_estimate["status"] = "IN_RANGE"
             combined_estimate["message"] = f"Book is estimated to be in the Main Rising Stars at around position #{best_estimate['estimated_position']}"
         else:
             positions_away = best_estimate["estimated_position"] - main_rs_size
             combined_estimate["status"] = "OUTSIDE_RANGE"
-            combined_estimate["message"] = f"Book is estimated to be {positions_away} positions away from joining Main Rising Stars"
             combined_estimate["positions_away"] = positions_away
+            combined_estimate["message"] = f"Book is estimated to be {positions_away} positions away from joining Main Rising Stars"
+    
+    elif worst_valid:
+        # Only have worst genre estimate
+        combined_estimate["estimated_position"] = worst_estimate["estimated_position"]
+        combined_estimate["worst_genre_estimate"] = worst_estimate["estimated_position"]
+        combined_estimate["prioritized"] = "worst"
         
-        combined_estimate["estimated_position"] = best_estimate["estimated_position"]
-        combined_estimate["best_genre_estimate"] = best_estimate["estimated_position"]
-        combined_estimate["main_rs_size"] = main_rs_size
-    else:
-        # No valid estimates available
-        combined_estimate["status"] = "UNKNOWN"
-        combined_estimate["message"] = "Could not calculate a position estimate with the available data"
-        combined_estimate["main_rs_size"] = main_rs_size
+        if worst_estimate["estimated_position"] <= main_rs_size:
+            combined_estimate["status"] = "IN_RANGE"
+            combined_estimate["message"] = f"Book is estimated to be in the Main Rising Stars at around position #{worst_estimate['estimated_position']}"
+        else:
+            positions_away = worst_estimate["estimated_position"] - main_rs_size
+            combined_estimate["status"] = "OUTSIDE_RANGE"
+            combined_estimate["positions_away"] = positions_away
+            combined_estimate["message"] = f"Book is estimated to be {positions_away} positions away from joining Main Rising Stars"
     
     return combined_estimate
 
