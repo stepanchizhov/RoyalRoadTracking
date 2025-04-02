@@ -74,7 +74,7 @@ def extract_book_id(book_url):
 
 def get_random_delay():
     """Returns a random delay between 1-3 seconds to mimic human behavior."""
-    return random.uniform(1.0, 3.0)
+    return random.uniform(3.0, 5.0)
 
 
 def fetch_with_retries(url, headers, max_retries=4, base_delay=2, max_delay=30):
