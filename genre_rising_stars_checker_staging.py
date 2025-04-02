@@ -720,29 +720,8 @@ def api_rising_stars():
     # Approach to handle partial results with correct continuation
     start_index = 0
     final_results = {}
-    final_results.update({"Main Rising Stars": results.get("Main Rising Stars", "❌ Not found in Main Rising Stars list")})
-    
-    # Continue checking from the first tag
-    while start_index < len(tags):
-        try:
-            results, next_index = check_rising_stars(book_id, tags, start_index)
-            
-            # Update final results with new results
-            final_results.update(results)
-            
-            # If all tags were processed, break the loop
-            if next_index == len(tags):
-                break
-            
-            # If a tag failed, update start_index and continue
-            start_index = next_index
-        except Exception as e:
-            logging.exception(f"❌ Critical error during rising stars check: {str(e)}")
-            final_results["critical_error"] = f"Critical error: {str(e)}"
-            break
     
     # Ensure we start with the results from checking the Main Rising Stars
-    main_results = {}
     try:
         headers = {
             "User-Agent": random.choice(USER_AGENTS),
@@ -768,26 +747,25 @@ def api_rising_stars():
 
         if book_id in book_ids:
             position = book_ids.index(book_id) + 1
-            main_results["Main Rising Stars"] = f"✅ Found in position #{position}"
+            main_result = f"✅ Found in position #{position}"
             logging.info(f"✅ Book {book_id} found in Main Rising Stars at position {position}")
         else:
-            main_results["Main Rising Stars"] = "❌ Not found in Main Rising Stars list"
+            main_result = "❌ Not found in Main Rising Stars list"
             logging.info(f"❌ Book {book_id} not found in Main Rising Stars")
+        
+        final_results["Main Rising Stars"] = main_result
     
     except Exception as e:
         logging.exception(f"⚠️ Failed to check Main Rising Stars: {str(e)}")
-        main_results["Main Rising Stars"] = f"⚠️ Failed to check: {str(e)}"
-    
-    # Add main results to final results
-    final_results.update(main_results)
+        final_results["Main Rising Stars"] = f"⚠️ Failed to check: {str(e)}"
     
     # Continue checking from the first tag
     while start_index < len(tags):
         try:
-            results, next_index = check_rising_stars(book_id, tags, start_index)
+            genre_results, next_index = check_rising_stars(book_id, tags, start_index)
             
             # Update final results with new results
-            final_results.update(results)
+            final_results.update(genre_results)
             
             # If all tags were processed, break the loop
             if next_index == len(tags):
