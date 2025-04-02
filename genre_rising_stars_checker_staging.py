@@ -694,7 +694,7 @@ def clear_cache():
 
 @app.route('/check_rising_stars', methods=['GET'])
 def api_rising_stars():
-    """Main API endpoint to check rising stars for a book."""
+    # Existing code...
     start_time = time.time()
     book_url = request.args.get("book_url")
     estimate_distance = request.args.get("estimate_distance", "false").lower() == "true"
@@ -737,36 +737,39 @@ def api_rising_stars():
             logging.warning(f"[{request_id}] ⚠️ No tags found for book ID {book_id}")
             
         # Check rising stars
-        results = check_rising_stars(book_id, tags)
+    results = check_rising_stars(book_id, tags)
+    
+    # Generate distance estimate if requested
+    distance_estimate = {}
+    if estimate_distance:
+        # Debug log to confirm this condition is triggered
+        logging.info(f"[{request_id}] 📏 Distance estimation requested. Main RS status: {results.get('Main Rising Stars', '')}")
         
-        # Generate distance estimate if requested
-        distance_estimate = {}
-        if estimate_distance:
-            # Only run estimation if book is not already in main Rising Stars
-            if results.get("Main Rising Stars", "").startswith("❌"):
-                logging.info(f"[{request_id}] 📏 Estimating distance to main Rising Stars list...")
-                
-                # Get headers for API requests
-                headers = {
-                    "User-Agent": random.choice(USER_AGENTS),
-                    "Accept": "text/html,application/xhtml+xml,application/xml",
-                    "Accept-Language": "en-US,en;q=0.9",
-                    "Referer": "https://www.royalroad.com/",
-                    "DNT": "1"
-                }
-                
+        # Only run estimation if book is not already in main Rising Stars
+        if results.get("Main Rising Stars", "").startswith("❌"):
+            logging.info(f"[{request_id}] 📏 Starting distance estimation to main Rising Stars list...")
+            
+            # Get headers for API requests
+            headers = {
+                "User-Agent": random.choice(USER_AGENTS),
+                "Accept": "text/html,application/xhtml+xml,application/xml",
+                "Accept-Language": "en-US,en;q=0.9",
+                "Referer": "https://www.royalroad.com/",
+                "DNT": "1"
+            }
+            
+            try:
                 distance_estimate = estimate_distance_to_main_rs(book_id, results, tags, headers)
                 logging.info(f"[{request_id}] 📏 Distance estimation completed")
-            else:
-                distance_estimate = {
-                    "message": "Book is already in the Main Rising Stars list",
-                    "status": "ALREADY_IN_LIST"
-                }
-                logging.info(f"[{request_id}] 📏 Book already in Main Rising Stars, no estimation needed")
-        
-        # Calculate processing time
-        processing_time = time.time() - start_time
-        logging.info(f"[{request_id}] ✅ Request completed in {processing_time:.2f} seconds")
+            except Exception as e:
+                logging.exception(f"[{request_id}] ❌ Error during distance estimation: {str(e)}")
+                distance_estimate = {"error": f"Error during estimation: {str(e)}"}
+        else:
+            distance_estimate = {
+                "message": "Book is already in the Main Rising Stars list",
+                "status": "ALREADY_IN_LIST"
+            }
+            logging.info(f"[{request_id}] 📏 Book already in Main Rising Stars, no estimation needed")
         
         response_data = {
             "title": title, 
