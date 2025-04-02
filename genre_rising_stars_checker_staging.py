@@ -91,15 +91,21 @@ def fetch_with_retries(url, headers, max_retries=4, base_delay=2, max_delay=30):
             if attempt > 0:
                 time.sleep(delay + get_random_delay())
             
-            # Make the request with timeout
-            response = scraper.get(url, headers=headers, timeout=15)  # Increased timeout to 15 seconds
+            # Make the request with timeout and stream option
+            response = scraper.get(url, headers=headers, timeout=20, stream=True)  # Increased timeout
             
             # Check if response is valid
             response.raise_for_status()
             
             # Verify we got actual content and not a CAPTCHA page
-            if "captcha" in response.text.lower() or len(response.text) < 500:
+            # Use a content preview to avoid loading entire response into memory
+            content_preview = response.raw.read(1000)
+            if b"captcha" in content_preview.lower() or len(content_preview) < 500:
                 raise Exception("Possible CAPTCHA page or empty response detected")
+            
+            # Reset the stream to the beginning for further reading
+            response.raw.decode_content = True
+            response.raw.seek(0)
             
             # Short delay to mimic reading the page
             time.sleep(get_random_delay() / 2)
@@ -622,8 +628,18 @@ def check_rising_stars(book_id, tags):
 
         response = fetch_with_retries(MAIN_RISING_STARS_URL, headers)
 
-        soup = BeautifulSoup(response.text, "html.parser")
-        book_ids = [a["href"].split("/")[2] for a in soup.find_all("a", class_="font-red-sunglo bold")]
+        soup = BeautifulSoup(response.text, 'html.parser')
+        
+        # More robust book ID extraction
+        book_links = soup.find_all("a", class_="font-red-sunglo")
+        book_ids = []
+        for link in book_links:
+            try:
+                link_parts = link.get('href', '').split('/')
+                if len(link_parts) >= 3:
+                    book_ids.append(link_parts[2])
+            except Exception as e:
+                logging.warning(f"⚠️ Error extracting book ID from link: {e}")
 
         if book_id in book_ids:
             position = book_ids.index(book_id) + 1
@@ -653,8 +669,18 @@ def check_rising_stars(book_id, tags):
                 results[tag] = f"⚠️ Failed to fetch list: {fetch_error}"
                 continue
 
-            soup = BeautifulSoup(response.text, "html.parser")
-            book_ids = [a["href"].split("/")[2] for a in soup.find_all("a", class_="font-red-sunglo bold")]
+            soup = BeautifulSoup(response.text, 'html.parser')
+            
+            # More robust book ID extraction
+            book_links = soup.find_all("a", class_="font-red-sunglo")
+            book_ids = []
+            for link in book_links:
+                try:
+                    link_parts = link.get('href', '').split('/')
+                    if len(link_parts) >= 3:
+                        book_ids.append(link_parts[2])
+                except Exception as e:
+                    logging.warning(f"⚠️ Error extracting book ID from link in {tag}: {e}")
 
             if book_id in book_ids:
                 position = book_ids.index(book_id) + 1
