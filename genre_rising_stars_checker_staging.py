@@ -727,16 +727,47 @@ def clear_cache():
 
 @app.route('/check_rising_stars', methods=['GET'])
 def api_rising_stars():
-    # ... (previous logging and parameter parsing code remains the same)
+    # Extract parameters from the request
+    book_url = request.args.get('book_url', '').strip()
+    estimate_distance_param = request.args.get('estimate_distance', 'false').lower() == 'true'
+    
+    # Logging for debugging
+    logging.critical(f"🔍 Received book_url: {book_url}")
+    logging.critical(f"🔍 Estimate distance: {estimate_distance_param}")
 
-    title, book_id, tags = get_title_and_tags(book_url)
-
-    if not book_id or not tags:
-        logging.error("❌ Failed to retrieve book details")
+    # Validate book URL
+    if not book_url or "royalroad.com" not in book_url:
+        logging.error("❌ Invalid Royal Road URL")
         return jsonify({
-            "error": "Failed to retrieve book details", 
-            "title": title, 
-            "results": {},
+            "error": "Invalid Royal Road URL", 
+            "results": {}, 
+            "title": "Unknown Title",
+            "debug_info": {
+                "book_url": book_url,
+                "estimate_distance_param": estimate_distance_param
+            }
+        }), 400
+
+    # Get book details
+    try:
+        title, book_id, tags = get_title_and_tags(book_url)
+
+        if not book_id or not tags:
+            logging.error("❌ Failed to retrieve book details")
+            return jsonify({
+                "error": "Failed to retrieve book details", 
+                "title": title, 
+                "results": {},
+                "debug_info": {
+                    "book_url": book_url,
+                    "estimate_distance_param": estimate_distance_param
+                }
+            }), 500
+    
+    except Exception as e:
+        logging.exception(f"❌ Unexpected error processing book URL: {str(e)}")
+        return jsonify({
+            "error": f"Unexpected error: {str(e)}",
             "debug_info": {
                 "book_url": book_url,
                 "estimate_distance_param": estimate_distance_param
