@@ -206,14 +206,6 @@ def get_title_and_tags(book_url, book_id=None):
 
 def get_book_details_from_main_rs(headers):
     """Get details of books on the main Rising Stars list including their IDs and tags."""
-    cache_key = "main_rs_books"
-    
-    # Check cache first
-    with cache_lock:
-        if cache_key in cache:
-            logging.info(f"📋 Cache hit for main Rising Stars books")
-            return cache[cache_key]
-    
     try:
         logging.info("🔍 Fetching main Rising Stars list for detailed book analysis...")
         response = fetch_with_retries(MAIN_RISING_STARS_URL, headers)
@@ -236,17 +228,24 @@ def get_book_details_from_main_rs(headers):
             # Extract book title
             title = title_link.text.strip()
             
-            # Extract tags - try a few methods
+            # Find tags using new method
+            tags_span = entry.find("span", class_="tags")
             tags = []
-            tag_elements = entry.find_all("span", class_="label")
-            for tag_el in tag_elements:
-                tag_text = tag_el.text.strip()
-                if tag_text and not tag_text.startswith("New!"):  # Skip "New!" labels
-                    tags.append(tag_text)
+            if tags_span:
+                tag_links = tags_span.find_all("a", class_="fiction-tag")
+                for tag_link in tag_links:
+                    # Extract tag from the href attribute
+                    tag = tag_link.get('href', '').split('tagsAdd=')[-1]
+                    if tag and tag not in tags:
+                        tags.append(tag)
             
-            # If no tags found, get them from the book's page
+            # If no tags found, try fallback method
             if not tags:
-                _, _, tags = get_title_and_tags("", book_id)
+                tag_links = entry.find_all("a", class_="label")
+                for tag_link in tag_links:
+                    tag = tag_link.get('href', '').split('tagsAdd=')[-1]
+                    if tag and tag not in tags:
+                        tags.append(tag)
             
             main_rs_books.append({
                 "position": position,
@@ -257,10 +256,6 @@ def get_book_details_from_main_rs(headers):
             
             logging.info(f"📊 Main RS #{position}: {title} (ID: {book_id}) - Tags: {tags}")
         
-        # Store in cache
-        with cache_lock:
-            cache[cache_key] = main_rs_books
-            
         return main_rs_books
     
     except Exception as e:
@@ -270,14 +265,6 @@ def get_book_details_from_main_rs(headers):
 
 def get_books_for_genre(genre, headers):
     """Get all books from a genre-specific Rising Stars list."""
-    cache_key = f"genre_books_{genre}"
-    
-    # Check cache first
-    with cache_lock:
-        if cache_key in cache:
-            logging.info(f"📋 Cache hit for {genre} Rising Stars books")
-            return cache[cache_key]
-    
     try:
         url = f"{GENRE_RISING_STARS_URL}{genre}"
         logging.info(f"🔍 Fetching Rising Stars for genre: {genre} for detailed analysis...")
@@ -310,10 +297,6 @@ def get_books_for_genre(genre, headers):
             
             logging.info(f"📚 {genre} RS #{position}: {title} (ID: {book_id})")
         
-        # Store in cache
-        with cache_lock:
-            cache[cache_key] = genre_books
-            
         return genre_books
     
     except Exception as e:
@@ -778,7 +761,7 @@ def api_rising_stars():
             final_results["critical_error"] = f"Critical error: {str(e)}"
             break
     
-    # Distance estimation logic remains the same
+    # Distance estimation logic with improved error handling
     distance_estimate = {}
     if estimate_distance_param:
         try:
@@ -786,6 +769,20 @@ def api_rising_stars():
         except Exception as e:
             logging.critical(f"❌ CRITICAL ERROR during distance estimation: {str(e)}")
             distance_estimate = {"error": f"Error during estimation: {str(e)}"}
+            
+            # If an error occurs during distance estimation, still return the results collected so far
+            response_data = {
+                "title": title, 
+                "results": final_results,
+                "book_id": book_id,
+                "tags": tags,
+                "debug_info": {
+                    "book_url": book_url,
+                    "estimate_distance_param": estimate_distance_param,
+                    "distance_estimation_error": str(e)
+                }
+            }
+            return jsonify(response_data)
     
     # Build response
     response_data = {
