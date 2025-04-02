@@ -411,7 +411,7 @@ def process_genre_estimate(genre_name, genre_position, main_rs_books, headers):
         logging.info(f"📊 Estimated position on Main RS: #{estimated_position}")
         
         if positions_away > 0:
-            logging.info(f"📊 Book is estimated to be {positions_away} positions away from joining Main Rising Stars")
+            logging.info(f"📊 Book is estimated to be at least {positions_away} positions away from joining Main Rising Stars")
         else:
             logging.info(f"📊 Book is estimated to be IN the Main Rising Stars list!")
         
@@ -441,7 +441,7 @@ def process_genre_estimate(genre_name, genre_position, main_rs_books, headers):
             genre_estimate["message"] = f"Book is estimated to be in the Main Rising Stars at position #{estimated_position}"
         else:
             genre_estimate["status"] = "OUTSIDE_RANGE"
-            genre_estimate["message"] = f"Book is estimated to be {positions_away} positions away from joining Main Rising Stars"
+            genre_estimate["message"] = f"Book is estimated to be at least {positions_away} positions away from joining Main Rising Stars"
             genre_estimate["positions_away"] = positions_away
         
         return genre_estimate
