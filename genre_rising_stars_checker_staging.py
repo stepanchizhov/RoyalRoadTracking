@@ -717,36 +717,27 @@ def api_rising_stars():
         
     results = check_rising_stars(book_id, tags)
     
-    # Generate distance estimate if requested
+    # Distance estimation logic
     distance_estimate = {}
     if estimate_distance:
         logging.info(f"📏 Distance estimation requested for book: {title}")
         
-        # Only run estimation if book is not already in main Rising Stars
-        if results.get("Main Rising Stars", "").startswith("❌"):
-            logging.info(f"📏 Book not in Main Rising Stars, starting estimation...")
-            
-            # Get headers for API requests
-            headers = {
-                "User-Agent": random.choice(USER_AGENTS),
-                "Accept": "text/html,application/xhtml+xml,application/xml",
-                "Accept-Language": "en-US,en;q=0.9",
-                "Referer": "https://www.royalroad.com/",
-                "DNT": "1"
-            }
-            
-            try:
-                distance_estimate = estimate_distance_to_main_rs(book_id, results, tags, headers)
-                logging.info(f"📏 Distance estimation completed")
-            except Exception as e:
-                logging.exception(f"❌ Error during distance estimation: {str(e)}")
-                distance_estimate = {"error": f"Error during estimation: {str(e)}"}
-        else:
-            distance_estimate = {
-                "message": "Book is already in the Main Rising Stars list",
-                "status": "ALREADY_IN_LIST"
-            }
-            logging.info(f"📏 Book already in Main Rising Stars, no estimation needed")
+        # Get headers for API requests
+        headers = {
+            "User-Agent": random.choice(USER_AGENTS),
+            "Accept": "text/html,application/xhtml+xml,application/xml",
+            "Accept-Language": "en-US,en;q=0.9",
+            "Referer": "https://www.royalroad.com/",
+            "DNT": "1"
+        }
+        
+        try:
+            # Always try to estimate distance, not just when not in Main Rising Stars
+            distance_estimate = estimate_distance_to_main_rs(book_id, results, tags, headers)
+            logging.info(f"📏 Distance estimation completed")
+        except Exception as e:
+            logging.exception(f"❌ Error during distance estimation: {str(e)}")
+            distance_estimate = {"error": f"Error during estimation: {str(e)}"}
     
     # Build response
     response_data = {
