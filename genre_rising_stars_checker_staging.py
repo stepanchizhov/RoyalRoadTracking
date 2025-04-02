@@ -196,3 +196,218 @@ def get_title_and_tags(book_url, book_id=None):
                     tag_text = link.get_text().strip()
                     if tag_text:
                         tags.append(tag_text)
+        
+        logging.info(f"✅ Extracted Book Title: {title}, ID: {book_id}, Tags: {tags}")
+        
+        # Store result in cache
+        result = (title, book_id, tags)
+        with cache_lock:
+            cache[cache_key] = result
+            
+        return result
+        
+    except Exception as e:
+        logging.exception(f"❌ Error fetching book details: {str(e)}")
+        return "Unknown Title", book_id, []
+
+
+def check_rising_stars(book_id, tags):
+    """Checks if the book appears in the main and genre-specific Rising Stars lists."""
+    results = {}
+    
+    # Check cache first
+    cache_key = f"rising_stars_{book_id}"
+    with cache_lock:
+        if cache_key in cache:
+            logging.info(f"📋 Cache hit for rising stars data for book ID {book_id}")
+            return cache[cache_key]
+
+    # Check the Main Rising Stars list first
+    try:
+        headers = {
+            "User-Agent": random.choice(USER_AGENTS),
+            "Accept": "text/html,application/xhtml+xml,application/xml",
+            "Accept-Language": "en-US,en;q=0.9",
+            "Referer": "https://www.royalroad.com/",
+            "DNT": "1"
+        }
+        
+        logging.info("🔍 Checking Main Rising Stars list...")
+
+        response = fetch_with_retries(MAIN_RISING_STARS_URL, headers)
+
+        soup = BeautifulSoup(response.text, "html.parser")
+        book_ids = [a["href"].split("/")[2] for a in soup.find_all("a", class_="font-red-sunglo bold")]
+
+        if book_id in book_ids:
+            position = book_ids.index(book_id) + 1
+            results["Main Rising Stars"] = f"✅ Found in position #{position}"
+            logging.info(f"✅ Book {book_id} found in Main Rising Stars at position {position}")
+        else:
+            results["Main Rising Stars"] = "❌ Not found in Main Rising Stars list"
+            logging.info(f"❌ Book {book_id} not found in Main Rising Stars")
+
+    except Exception as e:
+        logging.exception(f"⚠️ Failed to check Main Rising Stars: {str(e)}")
+        results["Main Rising Stars"] = f"⚠️ Failed to check: {str(e)}"
+
+    # Check each genre's Rising Stars page
+    for tag in tags:
+        url = f"{GENRE_RISING_STARS_URL}{tag}"
+        try:
+            logging.info(f"🔍 Checking Rising Stars for genre: {tag}")
+            
+            # Add a small delay between requests to avoid rate limiting
+            time.sleep(get_random_delay())
+            
+            response = fetch_with_retries(url, headers)
+
+            soup = BeautifulSoup(response.text, "html.parser")
+            book_ids = [a["href"].split("/")[2] for a in soup.find_all("a", class_="font-red-sunglo bold")]
+
+            if book_id in book_ids:
+                position = book_ids.index(book_id) + 1
+                results[tag] = f"✅ Found in position #{position}"
+                logging.info(f"✅ Book {book_id} found in {tag} at position {position}")
+            else:
+                results[tag] = f"❌ Not found in '{tag}' Rising Stars list"
+                logging.info(f"❌ Book {book_id} not found in {tag}")
+
+        except Exception as e:
+            logging.exception(f"⚠️ Failed to check {tag} Rising Stars: {str(e)}")
+            results[tag] = f"⚠️ Failed to check: {str(e)}"
+
+    # Store results in cache
+    with cache_lock:
+        cache[cache_key] = results
+        
+    return results
+
+
+@app.route('/health', methods=['GET'])
+def health_check():
+    """Simple health check endpoint."""
+    return jsonify({
+        "status": "healthy",
+        "time": datetime.now().isoformat(),
+        "cache_size": len(cache),
+        "cache_maxsize": cache.maxsize
+    })
+
+
+@app.route('/cache/clear', methods=['POST'])
+def clear_cache():
+    """Endpoint to clear the cache if needed."""
+    api_key = request.headers.get('X-API-Key')
+    if not api_key or api_key != "YOUR_SECRET_API_KEY":  # Replace with your actual secret key in production
+        return jsonify({"error": "Unauthorized"}), 403
+    
+    with cache_lock:
+        cache.clear()
+    
+    return jsonify({"status": "success", "message": "Cache cleared"})
+
+
+@app.route('/check_rising_stars', methods=['GET'])
+def api_rising_stars():
+    """Main API endpoint to check rising stars for a book."""
+    start_time = time.time()
+    book_url = request.args.get("book_url")
+    
+    request_id = f"req_{int(time.time())}_{random.randint(1000, 9999)}"
+    logging.info(f"[{request_id}] 📝 Received request for book URL: {book_url}")
+
+    # Validate input
+    if not book_url:
+        logging.error(f"[{request_id}] ❌ Missing book URL")
+        return jsonify({
+            "error": "Missing book URL parameter", 
+            "results": {}, 
+            "title": "Unknown Title"
+        }), 400
+        
+    if "royalroad.com" not in book_url:
+        logging.error(f"[{request_id}] ❌ Invalid Royal Road URL: {book_url}")
+        return jsonify({
+            "error": "Invalid Royal Road URL. URL must be from royalroad.com", 
+            "results": {}, 
+            "title": "Unknown Title"
+        }), 400
+
+    try:
+        # Extract book ID from URL first
+        book_id = extract_book_id(book_url)
+        if not book_id:
+            logging.error(f"[{request_id}] ❌ Could not extract book ID from URL: {book_url}")
+            return jsonify({
+                "error": "Could not extract book ID from URL", 
+                "results": {}, 
+                "title": "Unknown Title"
+            }), 400
+            
+        # Get title and tags
+        title, book_id, tags = get_title_and_tags(book_url, book_id)
+        
+        if not tags:
+            logging.warning(f"[{request_id}] ⚠️ No tags found for book ID {book_id}")
+            
+        # Check rising stars
+        results = check_rising_stars(book_id, tags)
+        
+        # Calculate processing time
+        processing_time = time.time() - start_time
+        logging.info(f"[{request_id}] ✅ Request completed in {processing_time:.2f} seconds")
+        
+        return jsonify({
+            "title": title, 
+            "results": results,
+            "book_id": book_id,
+            "tags": tags,
+            "processing_time": f"{processing_time:.2f} seconds"
+        })
+        
+    except Exception as e:
+        error_type = type(e).__name__
+        logging.exception(f"[{request_id}] ❌ Error processing request: {error_type}: {str(e)}")
+        
+        return jsonify({
+            "error": f"Failed to process request: {str(e)}", 
+            "title": getattr(locals(), 'title', "Unknown Title"), 
+            "results": {}
+        }), 500
+
+
+# Function to periodically clean up cache (optional, for long-running servers)
+def cache_cleanup():
+    """Clean up expired cache entries to free memory."""
+    while True:
+        time.sleep(3600)  # Run every hour
+        try:
+            with cache_lock:
+                # Note: TTLCache automatically removes expired entries on access,
+                # but this forces a cleanup even without access
+                old_size = len(cache)
+                for key in list(cache.keys()):
+                    # Just accessing each key will trigger TTLCache's cleanup mechanism
+                    _ = cache.get(key)
+                current_size = len(cache)
+                
+                if old_size > current_size:
+                    logging.info(f"🧹 Cache cleanup: removed {old_size - current_size} expired entries")
+        except Exception as e:
+            logging.error(f"❌ Error during cache cleanup: {e}")
+
+
+if __name__ == '__main__':
+    import os
+    
+    # Start cache cleanup in a background thread
+    cleanup_thread = threading.Thread(target=cache_cleanup, daemon=True)
+    cleanup_thread.start()
+    
+    # Get port from environment variable, default to 10000
+    PORT = int(os.environ.get("PORT", 10000))
+    
+    # Start the Flask app
+    logging.info(f"🚀 Starting server on port {PORT}")
+    app.run(host="0.0.0.0", port=PORT, debug=True)
