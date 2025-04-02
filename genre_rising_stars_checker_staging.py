@@ -83,17 +83,37 @@ def fetch_with_retries(url, headers, max_retries=3):
 
     for attempt in range(max_retries):
         try:
-            logging.info(f"🔄 Attempt {attempt + 1}: Fetching {url}")
+            logging.info(f"🔄 Attempt {attempt + 1}/{max_retries}: Fetching {url}")
+            
+            # Use cloudscraper with randomized browser settings
+            scraper = cloudscraper.create_scraper(
+                browser={
+                    'browser': random.choice(['chrome', 'firefox']), 
+                    'platform': random.choice(['windows', 'darwin']), 
+                    'desktop': True
+                }
+            )
+            
             response = scraper.get(url, headers=headers, timeout=30)
             response.raise_for_status()  # Raise error for HTTP 4xx/5xx status codes
+            
+            # Additional check for potentially problematic responses
+            if len(response.text) < 500:
+                raise Exception("Response content is suspiciously short")
+            
             return response  # Return response if successful
         except Exception as e:
-            logging.error(f"❌ Request failed (attempt {attempt + 1}): {e}")
+            logging.error(f"❌ Request failed (attempt {attempt + 1}/{max_retries}): {e}")
+            
             if attempt < max_retries - 1:
-                time.sleep(delay)
-                delay *= 2  # Exponential backoff
+                # Exponential backoff with jitter
+                jitter = random.uniform(0, 1)
+                sleep_time = delay * (2 ** attempt) + jitter
+                logging.info(f"⏳ Waiting {sleep_time:.2f} seconds before retry...")
+                time.sleep(sleep_time)
             else:
-                raise Exception("Failed to fetch data after multiple attempts.")
+                logging.error(f"❌ Failed to fetch {url} after {max_retries} attempts")
+                raise Exception(f"Failed to fetch data after {max_retries} attempts: {e}")
 
 def get_title_and_tags(book_url, book_id=None):
     """Extracts book title, ID, and tags from a Royal Road book page."""
@@ -569,19 +589,20 @@ def estimate_distance_to_main_rs(book_id, genre_results, tags, headers):
         return {"error": f"Error estimating distance: {str(e)}"}
 
 
-    def check_rising_stars(book_id, tags):
+def check_rising_stars(book_id, tags, start_index=0):
     """Checks if the book appears in the main and genre-specific Rising Stars lists."""
     results = {}
-
+    
     # Check the Main Rising Stars list first
     try:
         headers = {"User-Agent": random.choice(USER_AGENTS)}
-        logging.info("Checking Main Rising Stars list...")
+        logging.info("🔍 Checking Main Rising Stars list...")
 
         response = fetch_with_retries(MAIN_RISING_STARS_URL, headers)
 
-        soup = BeautifulSoup(response.text, "html.parser")
-        book_ids = [a["href"].split("/")[2] for a in soup.find_all("a", class_="font-red-sunglo bold")]
+        soup = BeautifulSoup(response.text, 'html.parser')
+        book_links = soup.find_all("a", class_="font-red-sunglo")
+        book_ids = [link.get('href', '').split('/')[2] for link in book_links]
 
         if book_id in book_ids:
             position = book_ids.index(book_id) + 1
@@ -592,18 +613,20 @@ def estimate_distance_to_main_rs(book_id, genre_results, tags, headers):
             logging.info(f"❌ Book {book_id} not found in Main Rising Stars")
 
     except Exception as e:
-        logging.exception("⚠️ Failed to check Main Rising Stars")
-        results["Main Rising Stars"] = f"⚠️ Failed to check: {e}"
+        logging.exception(f"⚠️ Failed to check Main Rising Stars: {str(e)}")
+        results["Main Rising Stars"] = f"⚠️ Failed to check: {str(e)}"
 
-    # Check each genre's Rising Stars page
-    for tag in tags:
-        url = f"{GENRE_RISING_STARS_URL}{tag}"
+    # Check each genre's Rising Stars page starting from the given index
+    for tag in tags[start_index:]:
         try:
-            logging.info(f"Checking Rising Stars for genre: {tag}")
+            url = f"{GENRE_RISING_STARS_URL}{tag}"
+            logging.info(f"🔍 Checking Rising Stars for genre: {tag}")
+            
             response = fetch_with_retries(url, headers)
 
-            soup = BeautifulSoup(response.text, "html.parser")
-            book_ids = [a["href"].split("/")[2] for a in soup.find_all("a", class_="font-red-sunglo bold")]
+            soup = BeautifulSoup(response.text, 'html.parser')
+            book_links = soup.find_all("a", class_="font-red-sunglo")
+            book_ids = [link.get('href', '').split('/')[2] for link in book_links]
 
             if book_id in book_ids:
                 position = book_ids.index(book_id) + 1
@@ -614,10 +637,13 @@ def estimate_distance_to_main_rs(book_id, genre_results, tags, headers):
                 logging.info(f"❌ Book {book_id} not found in {tag}")
 
         except Exception as e:
-            logging.exception(f"⚠️ Failed to check {tag} Rising Stars")
-            results[tag] = f"⚠️ Failed to check: {e}"
+            logging.exception(f"⚠️ Failed to check {tag} Rising Stars: {str(e)}")
+            results[tag] = f"⚠️ Failed to check: {str(e)}"
+            
+            # Return partial results and the index of the failed tag
+            return results, tags.index(tag)
 
-    return results
+    return results, len(tags)
 
 @app.route('/health', methods=['GET'])
 def health_check():
@@ -645,7 +671,6 @@ def clear_cache():
 
 @app.route('/check_rising_stars', methods=['GET'])
 def api_rising_stars():
-    # Extract parameters from the request
     book_url = request.args.get('book_url', '').strip()
     estimate_distance_param = request.args.get('estimate_distance', 'false').lower() == 'true'
     
@@ -695,6 +720,26 @@ def api_rising_stars():
     # Approach to handle partial results with correct continuation
     start_index = 0
     final_results = {}
+    final_results.update({"Main Rising Stars": results.get("Main Rising Stars", "❌ Not found in Main Rising Stars list")})
+    
+    # Continue checking from the first tag
+    while start_index < len(tags):
+        try:
+            results, next_index = check_rising_stars(book_id, tags, start_index)
+            
+            # Update final results with new results
+            final_results.update(results)
+            
+            # If all tags were processed, break the loop
+            if next_index == len(tags):
+                break
+            
+            # If a tag failed, update start_index and continue
+            start_index = next_index
+        except Exception as e:
+            logging.exception(f"❌ Critical error during rising stars check: {str(e)}")
+            final_results["critical_error"] = f"Critical error: {str(e)}"
+            break
     
     # Ensure we start with the results from checking the Main Rising Stars
     main_results = {}
