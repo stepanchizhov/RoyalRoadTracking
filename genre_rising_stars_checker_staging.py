@@ -415,9 +415,9 @@ def process_genre_estimate(genre_name, genre_position, main_rs_books, headers):
         logging.info(f"📊 Estimated position on Main RS: #{estimated_position}")
         
         if positions_away > 0:
-            logging.info(f"📊 Book is estimated to be at least {positions_away} positions away from joining Main Rising Stars")
+            logging.info(f"📊 The book is estimated to be at least {positions_away} positions away from joining Main Rising Stars")
         else:
-            logging.info(f"📊 Book is estimated to be IN the Main Rising Stars list!")
+            logging.info(f"📊 The book is estimated to be IN the Main Rising Stars list!")
         
         # Build the result
         genre_estimate = {
@@ -443,10 +443,10 @@ def process_genre_estimate(genre_name, genre_position, main_rs_books, headers):
         # Add status information
         if estimated_position <= len(main_rs_books):
             genre_estimate["status"] = "IN_RANGE"
-            genre_estimate["message"] = f"Book is estimated to be in the Main Rising Stars at position #{estimated_position}"
+            genre_estimate["message"] = f"The book is estimated to be in the Main Rising Stars at position #{estimated_position}"
         else:
             genre_estimate["status"] = "OUTSIDE_RANGE"
-            genre_estimate["message"] = f"Book is estimated to be {positions_away} positions away from joining Main Rising Stars"
+            genre_estimate["message"] = f"The book is estimated to be at least {positions_away} positions away from joining Main Rising Stars"
             genre_estimate["positions_away"] = positions_away
         
         return genre_estimate
@@ -506,7 +506,7 @@ def create_combined_estimate(best_estimate, worst_estimate, middle_estimate, mai
         
         combined_estimate["estimated_position"] = selected_estimate["estimated_position"]
         combined_estimate["status"] = "IN_RANGE"
-        combined_estimate["message"] = f"Book is estimated to be in the Main Rising Stars at around position #{selected_estimate['estimated_position']}"
+        combined_estimate["message"] = f"The book is estimated to be in the Main Rising Stars at around position #{selected_estimate['estimated_position']}"
         combined_estimate["prioritized"] = selected_label
         
     else:
@@ -519,7 +519,7 @@ def create_combined_estimate(best_estimate, worst_estimate, middle_estimate, mai
         combined_estimate["estimated_position"] = selected_estimate["estimated_position"]
         combined_estimate["status"] = "OUTSIDE_RANGE"
         combined_estimate["positions_away"] = positions_away
-        combined_estimate["message"] = f"Book is estimated to be {positions_away} positions away from joining Main Rising Stars"
+        combined_estimate["message"] = f"The book is estimated to be at least {positions_away} positions away from joining Main Rising Stars"
         combined_estimate["prioritized"] = selected_label
     
     # If we have multiple estimates, calculate an average as well
