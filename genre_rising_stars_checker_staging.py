@@ -345,7 +345,8 @@ def process_genre_estimate(genre_name, genre_position, main_rs_books, headers):
                 "message": f"No common books found between {genre_name} Rising Stars and Main Rising Stars",
                 "genre": genre_name,
                 "book_genre_position": genre_position,
-                "main_rs_size": len(main_rs_books)
+                "main_rs_size": len(main_rs_books),
+                "top_book_main_position": None  # Add this field explicitly
             }
         
         # Sort by main position (lowest to highest)
@@ -354,6 +355,9 @@ def process_genre_estimate(genre_name, genre_position, main_rs_books, headers):
         # Get the highest and lowest books on main RS
         highest_on_main = common_books_by_main[0]
         lowest_on_main = common_books_by_main[-1]
+        
+        # Make sure we add the top book's main position explicitly
+        top_book_main_position = highest_on_main["main_position"]
         
         # If we only have one common book, we'll use a simple scaling factor
         if highest_on_main["book_id"] == lowest_on_main["book_id"]:
@@ -423,6 +427,7 @@ def process_genre_estimate(genre_name, genre_position, main_rs_books, headers):
             "estimated_position": estimated_position,
             "main_rs_size": len(main_rs_books),
             "common_books_count": len(common_books),
+            "top_book_main_position": top_book_main_position,  # Make sure this is included
             "highest_common_book": {
                 "title": highest_on_main["title"],
                 "genre_position": highest_on_main["genre_position"],
@@ -441,7 +446,7 @@ def process_genre_estimate(genre_name, genre_position, main_rs_books, headers):
             genre_estimate["message"] = f"Book is estimated to be in the Main Rising Stars at position #{estimated_position}"
         else:
             genre_estimate["status"] = "OUTSIDE_RANGE"
-            genre_estimate["message"] = f"Book is estimated to be at least {positions_away} positions away from joining Main Rising Stars"
+            genre_estimate["message"] = f"Book is estimated to be {positions_away} positions away from joining Main Rising Stars"
             genre_estimate["positions_away"] = positions_away
         
         return genre_estimate
@@ -451,7 +456,8 @@ def process_genre_estimate(genre_name, genre_position, main_rs_books, headers):
         return {
             "error": f"Error processing genre: {str(e)}",
             "genre": genre_name,
-            "book_genre_position": genre_position
+            "book_genre_position": genre_position,
+            "top_book_main_position": None  # Make sure we include this even in error cases
         }
 
 def create_combined_estimate(best_estimate, worst_estimate, middle_estimate, main_rs_size):
