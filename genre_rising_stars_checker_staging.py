@@ -359,7 +359,7 @@ def estimate_distance_to_main_rs(book_id, genre_results, tags, headers):
         # Create a dictionary of genre -> position for this book
         book_positions = {}
         for genre, status in genre_results.items():
-            if status.startswith("✅ Found in position #"):
+            if genre != "Main Rising Stars" and status.startswith("✅ Found in position #"):
                 position = int(re.search(r"#(\d+)", status).group(1))
                 book_positions[genre] = position
         
@@ -562,13 +562,13 @@ def estimate_distance_to_main_rs(book_id, genre_results, tags, headers):
         
         # Create a combined estimate
         combined_estimate = {}
-        if "estimated_position" in best_estimate and "estimated_position" in worst_estimate:
+        if "estimated_position" in best_estimate and "worst_genre_estimate" in estimates and "estimated_position" in estimates["worst_genre_estimate"]:
             # Use the average if we have both estimates
-            combined_position = (best_estimate["estimated_position"] + worst_estimate["estimated_position"]) / 2
+            combined_position = (best_estimate["estimated_position"] + estimates["worst_genre_estimate"]["estimated_position"]) / 2
             combined_estimate = {
                 "estimated_position": int(combined_position),
                 "best_genre_estimate": best_estimate["estimated_position"],
-                "worst_genre_estimate": worst_estimate["estimated_position"],
+                "worst_genre_estimate": estimates["worst_genre_estimate"]["estimated_position"],
                 "main_rs_size": len(main_rs_books)
             }
             
@@ -588,16 +588,7 @@ def estimate_distance_to_main_rs(book_id, genre_results, tags, headers):
             else:
                 positions_away = best_estimate["estimated_position"] - len(main_rs_books)
                 combined_estimate["status"] = "OUTSIDE_RANGE"
-                combined_estimate["message"] = f"Book is estimated to be {positions_away} positions away from joining Main Rising Stars"
-                combined_estimate["positions_away"] = positions_away
-            
-            combined_estimate["estimated_position"] = best_estimate["estimated_position"]
-            combined_estimate["best_genre_estimate"] = best_estimate["estimated_position"]
-            combined_estimate["main_rs_size"] = len(main_rs_books)
-        
-        estimates["combined_estimate"] = combined_estimate
-        
-        return estimates
+                combined_estimate["message
     
     except Exception as e:
         logging.exception(f"❌ Error estimating distance to main Rising Stars: {str(e)}")
