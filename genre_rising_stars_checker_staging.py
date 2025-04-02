@@ -77,8 +77,8 @@ def get_random_delay():
     return random.uniform(3.0, 5.0)
 
 
-def fetch_with_retries(url, headers, max_retries=3):
-    """Fetches a URL with retry logic and exponential backoff."""
+def fetch_with_retries(url, headers, max_retries=3, timeout=20):
+    """Fetches a URL with retry logic and exponential backoff. Reduced timeout."""
     delay = 2  # Initial delay in seconds
 
     for attempt in range(max_retries):
@@ -94,12 +94,16 @@ def fetch_with_retries(url, headers, max_retries=3):
                 }
             )
             
-            response = scraper.get(url, headers=headers, timeout=30)
+            # Reduced timeout from 30 to 20 seconds
+            response = scraper.get(url, headers=headers, timeout=timeout)
             response.raise_for_status()  # Raise error for HTTP 4xx/5xx status codes
             
             # Additional check for potentially problematic responses
             if len(response.text) < 500:
                 raise Exception("Response content is suspiciously short")
+            
+            # Add a short delay to avoid overloading the server and triggering timeouts
+            time.sleep(0.5)
             
             return response  # Return response if successful
         except Exception as e:
@@ -264,12 +268,19 @@ def get_book_details_from_main_rs(headers):
 
 
 def get_books_for_genre(genre, headers):
-    """Get all books from a genre-specific Rising Stars list."""
+    """Get all books from a genre-specific Rising Stars list with caching."""
+    # Check cache first
+    cache_key = f"genre_books_{genre}"
+    with cache_lock:
+        if cache_key in cache:
+            logging.info(f"📋 Cache hit for genre books: {genre}")
+            return cache[cache_key]
+    
     try:
         url = f"{GENRE_RISING_STARS_URL}{genre}"
         logging.info(f"🔍 Fetching Rising Stars for genre: {genre} for detailed analysis...")
         
-        response = fetch_with_retries(url, headers)
+        response = fetch_with_retries(url, headers, timeout=15)  # Reduced timeout
         soup = BeautifulSoup(response.text, "html.parser")
         
         # Get all book entries
@@ -297,30 +308,183 @@ def get_books_for_genre(genre, headers):
             
             logging.info(f"📚 {genre} RS #{position}: {title} (ID: {book_id})")
         
+        # Cache the results
+        with cache_lock:
+            cache[cache_key] = genre_books
+            
         return genre_books
     
     except Exception as e:
         logging.exception(f"❌ Error fetching genre Rising Stars books: {str(e)}")
         return []
 
+def process_genre_estimate(genre_name, genre_position, main_rs_books, headers):
+    """Helper function to process a single genre's estimate."""
+    try:
+        # Get all books from genre Rising Stars
+        genre_books = get_books_for_genre(genre_name, headers)
+        if not genre_books:
+            return {"error": f"Could not fetch books for {genre_name} Rising Stars"}
+        
+        # Find top book (position #1) from genre
+        genre_top_book = next((b for b in genre_books if b["position"] == 1), None)
+        if not genre_top_book:
+            logging.warning(f"⚠️ Could not find top book for {genre_name}")
+            return {"error": f"Could not find top book for {genre_name}"}
+        
+        # Find position of genre's top book on main Rising Stars
+        genre_top_book_main_position = next(
+            (b["position"] for b in main_rs_books if b["book_id"] == genre_top_book["book_id"]), 
+            None
+        )
+        
+        # Find the bottom book with the same tag on main Rising Stars
+        main_rs_with_tag = [b for b in main_rs_books if genre_name in b["tags"]]
+        main_rs_bottom_with_tag = max(main_rs_with_tag, key=lambda x: x["position"]) if main_rs_with_tag else None
+        
+        genre_estimate = {}
+        if genre_top_book_main_position and main_rs_bottom_with_tag:
+            # Calculate scaling factor
+            genre_bottom_position = next(
+                (b["position"] for b in genre_books if b["book_id"] == main_rs_bottom_with_tag["book_id"]),
+                len(genre_books)  # Assume it would be at the bottom if not found
+            )
+            
+            # Print all the intermediate findings
+            logging.info(f"📊 GENRE ANALYSIS: {genre_name}")
+            logging.info(f"📊 Book position: #{genre_position}")
+            logging.info(f"📊 Top book from {genre_name}: {genre_top_book['title']} (ID: {genre_top_book['book_id']})")
+            logging.info(f"📊 Top book position on Main RS: #{genre_top_book_main_position}")
+            logging.info(f"📊 Bottom book from Main RS with {genre_name} tag: {main_rs_bottom_with_tag['title']} (pos #{main_rs_bottom_with_tag['position']})")
+            
+            if genre_bottom_position > genre_position:
+                # Calculate how many positions between top and bottom books
+                main_rs_span = main_rs_bottom_with_tag["position"] - genre_top_book_main_position
+                genre_rs_span = genre_bottom_position - 1  # 1 is the top position
+                
+                # Calculate scaling factor (how many main RS positions per genre position)
+                scaling_factor = main_rs_span / genre_rs_span if genre_rs_span > 0 else 1
+                
+                # Calculate estimated positions to Main RS
+                positions_to_scale = genre_position - 1  # Distance from top
+                estimated_distance = int(positions_to_scale * scaling_factor)
+                estimated_position = genre_top_book_main_position + estimated_distance
+                
+                genre_estimate = {
+                    "genre": genre_name,
+                    "book_genre_position": genre_position,
+                    "top_book_main_position": genre_top_book_main_position,
+                    "bottom_tag_book_main_position": main_rs_bottom_with_tag["position"],
+                    "bottom_tag_book_genre_position": genre_bottom_position,
+                    "scaling_factor": scaling_factor,
+                    "estimated_distance": estimated_distance,
+                    "estimated_position": estimated_position,
+                    "main_rs_size": len(main_rs_books),
+                    "positions_away_from_bottom": max(0, len(main_rs_books) - estimated_position)
+                }
+                
+                # Log the estimate
+                logging.info(f"📊 ESTIMATE: Book would be around position #{estimated_position} on Main RS")
+                logging.info(f"📊 This is {estimated_distance} positions away from the top book of {genre_name}")
+                if estimated_position <= len(main_rs_books):
+                    logging.info(f"📊 The book is estimated to be IN the Main Rising Stars list!")
+                else:
+                    positions_away = estimated_position - len(main_rs_books)
+                    logging.info(f"📊 The book is estimated to be {positions_away} positions away from joining Main Rising Stars")
+            else:
+                genre_estimate = {
+                    "message": f"Book is already higher than the lowest {genre_name} book on Main RS",
+                    "genre": genre_name,
+                    "book_genre_position": genre_position,
+                    "top_book_main_position": genre_top_book_main_position,
+                    "bottom_tag_book_main_position": main_rs_bottom_with_tag["position"],
+                    "main_rs_size": len(main_rs_books)
+                }
+        else:
+            genre_estimate = {
+                "message": f"Could not find enough reference books to make an estimate from {genre_name}",
+                "genre": genre_name,
+                "book_genre_position": genre_position,
+                "top_book_main_position": genre_top_book_main_position,
+                "main_rs_size": len(main_rs_books)
+            }
+        
+        return genre_estimate
+        
+    except Exception as e:
+        logging.exception(f"❌ Error processing genre estimate for {genre_name}: {str(e)}")
+        return {
+            "error": f"Error processing genre: {str(e)}",
+            "genre": genre_name,
+            "book_genre_position": genre_position
+        }
+
+def create_combined_estimate(best_estimate, worst_estimate, main_rs_size):
+    """Creates a combined estimate from best and worst genre estimates."""
+    combined_estimate = {}
+    
+    if "estimated_position" in best_estimate and worst_estimate and "estimated_position" in worst_estimate:
+        # Use the average if we have both estimates
+        combined_position = (best_estimate["estimated_position"] + worst_estimate["estimated_position"]) / 2
+        combined_estimate = {
+            "estimated_position": int(combined_position),
+            "best_genre_estimate": best_estimate["estimated_position"],
+            "worst_genre_estimate": worst_estimate["estimated_position"],
+            "main_rs_size": main_rs_size
+        }
+        
+        if combined_position <= main_rs_size:
+            combined_estimate["status"] = "IN_RANGE"
+            combined_estimate["message"] = f"Book is estimated to be in the Main Rising Stars at around position #{int(combined_position)}"
+        else:
+            positions_away = int(combined_position - main_rs_size)
+            combined_estimate["status"] = "OUTSIDE_RANGE"
+            combined_estimate["message"] = f"Book is estimated to be {positions_away} positions away from joining Main Rising Stars"
+            combined_estimate["positions_away"] = positions_away
+    elif "estimated_position" in best_estimate:
+        # Only have best genre estimate
+        if best_estimate["estimated_position"] <= main_rs_size:
+            combined_estimate["status"] = "IN_RANGE"
+            combined_estimate["message"] = f"Book is estimated to be in the Main Rising Stars at around position #{best_estimate['estimated_position']}"
+        else:
+            positions_away = best_estimate["estimated_position"] - main_rs_size
+            combined_estimate["status"] = "OUTSIDE_RANGE"
+            combined_estimate["message"] = f"Book is estimated to be {positions_away} positions away from joining Main Rising Stars"
+            combined_estimate["positions_away"] = positions_away
+        
+        combined_estimate["estimated_position"] = best_estimate["estimated_position"]
+        combined_estimate["best_genre_estimate"] = best_estimate["estimated_position"]
+        combined_estimate["main_rs_size"] = main_rs_size
+    
+    return combined_estimate
 
 def estimate_distance_to_main_rs(book_id, genre_results, tags, headers):
     """
     Estimate how far the book is from the main Rising Stars list.
-    
-    The algorithm works as follows:
-    1. Find the genre where the book has the best position
-    2. Get books from that genre's Rising Stars list
-    3. Get books from the main Rising Stars list
-    4. Find the top book from the genre list and its position on the main list
-    5. Find the bottom book with the same tag on the main list
-    6. Calculate the relative position and estimate distance
+    Modified to handle timeouts better and process incrementally.
     """
+    # Check cache first
+    cache_key = f"distance_estimate_{book_id}"
+    with cache_lock:
+        if cache_key in cache:
+            logging.info(f"📋 Cache hit for distance estimate: {book_id}")
+            return cache[cache_key]
+    
     estimates = {}
     
     try:
-        # Get main Rising Stars books with their tags
-        main_rs_books = get_book_details_from_main_rs(headers)
+        # Get main Rising Stars books with their tags - this is a critical operation
+        cache_key_main = "main_rs_books"
+        with cache_lock:
+            if cache_key_main in cache:
+                main_rs_books = cache[cache_key_main]
+                logging.info(f"📋 Cache hit for main Rising Stars books")
+            else:
+                main_rs_books = get_book_details_from_main_rs(headers)
+                if main_rs_books:
+                    with cache_lock:
+                        cache[cache_key_main] = main_rs_books
+        
         if not main_rs_books:
             return {"error": "Could not fetch main Rising Stars data for estimation"}
         
@@ -342,229 +506,40 @@ def estimate_distance_to_main_rs(book_id, genre_results, tags, headers):
         best_genre_name, best_genre_position = best_genre
         logging.info(f"🌟 Book has best position in {best_genre_name} at #{best_genre_position}")
         
-        # Get all books from best genre Rising Stars
-        best_genre_books = get_books_for_genre(best_genre_name, headers)
-        if not best_genre_books:
-            return {"error": f"Could not fetch books for {best_genre_name} Rising Stars"}
-        
-        # Find top book (position #1) from best genre
-        best_genre_top_book = next((b for b in best_genre_books if b["position"] == 1), None)
-        if not best_genre_top_book:
-            logging.warning(f"⚠️ Could not find top book for {best_genre_name}")
-            return {"error": f"Could not find top book for {best_genre_name}"}
-        
-        # Find position of best genre's top book on main Rising Stars
-        best_genre_top_book_main_position = next(
-            (b["position"] for b in main_rs_books if b["book_id"] == best_genre_top_book["book_id"]), 
-            None
+        # We'll process one genre at a time to avoid timeouts
+        # Start with best genre
+        best_estimate = process_genre_estimate(
+            best_genre_name, 
+            best_genre_position, 
+            main_rs_books, 
+            headers
         )
-        
-        # Find the bottom book with the same tag on main Rising Stars
-        main_rs_with_tag = [b for b in main_rs_books if best_genre_name in b["tags"]]
-        main_rs_bottom_with_tag = max(main_rs_with_tag, key=lambda x: x["position"]) if main_rs_with_tag else None
-        
-        best_estimate = {}
-        if best_genre_top_book_main_position and main_rs_bottom_with_tag:
-            # Calculate scaling factor
-            best_genre_bottom_position = next(
-                (b["position"] for b in best_genre_books if b["book_id"] == main_rs_bottom_with_tag["book_id"]),
-                len(best_genre_books)  # Assume it would be at the bottom if not found
-            )
-            
-            # Print all the intermediate findings
-            logging.info(f"📊 BEST GENRE ANALYSIS:")
-            logging.info(f"📊 Genre: {best_genre_name}, Book position: #{best_genre_position}")
-            logging.info(f"📊 Top book from {best_genre_name}: {best_genre_top_book['title']} (ID: {best_genre_top_book['book_id']})")
-            logging.info(f"📊 Top book position on Main RS: #{best_genre_top_book_main_position}")
-            logging.info(f"📊 Bottom book from Main RS with {best_genre_name} tag: {main_rs_bottom_with_tag['title']} (pos #{main_rs_bottom_with_tag['position']})")
-            
-            if best_genre_bottom_position > best_genre_position:
-                # Calculate how many positions between top and bottom books
-                main_rs_span = main_rs_bottom_with_tag["position"] - best_genre_top_book_main_position
-                genre_rs_span = best_genre_bottom_position - 1  # 1 is the top position
-                
-                # Calculate scaling factor (how many main RS positions per genre position)
-                scaling_factor = main_rs_span / genre_rs_span if genre_rs_span > 0 else 1
-                
-                # Calculate estimated positions to Main RS
-                positions_to_scale = best_genre_position - 1  # Distance from top
-                estimated_distance = int(positions_to_scale * scaling_factor)
-                estimated_position = best_genre_top_book_main_position + estimated_distance
-                
-                best_estimate = {
-                    "genre": best_genre_name,
-                    "book_genre_position": best_genre_position,
-                    "top_book_main_position": best_genre_top_book_main_position,
-                    "bottom_tag_book_main_position": main_rs_bottom_with_tag["position"],
-                    "bottom_tag_book_genre_position": best_genre_bottom_position,
-                    "scaling_factor": scaling_factor,
-                    "estimated_distance": estimated_distance,
-                    "estimated_position": estimated_position,
-                    "main_rs_size": len(main_rs_books),
-                    "positions_away_from_bottom": max(0, len(main_rs_books) - estimated_position)
-                }
-                
-                # Log the estimate
-                logging.info(f"📈 BEST ESTIMATE: Book would be around position #{estimated_position} on Main RS")
-                logging.info(f"📈 This is {estimated_distance} positions away from the top book of {best_genre_name}")
-                if estimated_position <= len(main_rs_books):
-                    logging.info(f"📈 The book is estimated to be IN the Main Rising Stars list!")
-                else:
-                    positions_away = estimated_position - len(main_rs_books)
-                    logging.info(f"📈 The book is estimated to be {positions_away} positions away from joining Main Rising Stars")
-            else:
-                best_estimate = {
-                    "message": f"Book is already higher than the lowest {best_genre_name} book on Main RS",
-                    "genre": best_genre_name,
-                    "book_genre_position": best_genre_position,
-                    "top_book_main_position": best_genre_top_book_main_position,
-                    "bottom_tag_book_main_position": main_rs_bottom_with_tag["position"],
-                    "main_rs_size": len(main_rs_books)
-                }
-        else:
-            best_estimate = {
-                "message": "Could not find enough reference books to make an estimate from best genre",
-                "genre": best_genre_name,
-                "book_genre_position": best_genre_position,
-                "top_book_main_position": best_genre_top_book_main_position,
-                "main_rs_size": len(main_rs_books)
-            }
-        
         estimates["best_genre_estimate"] = best_estimate
         
-        # Now do the same for worst genre
+        # Now do the same for worst genre if different from best genre
         worst_genre_name, worst_genre_position = worst_genre
         if worst_genre_name != best_genre_name:  # Only do this if different from best genre
             logging.info(f"🔍 Book has worst position in {worst_genre_name} at #{worst_genre_position}")
             
-            # Get all books from worst genre Rising Stars
-            worst_genre_books = get_books_for_genre(worst_genre_name, headers)
-            if not worst_genre_books:
-                estimates["worst_genre_estimate"] = {"error": f"Could not fetch books for {worst_genre_name} Rising Stars"}
-                return estimates
-            
-            # Find top book (position #1) from worst genre
-            worst_genre_top_book = next((b for b in worst_genre_books if b["position"] == 1), None)
-            if not worst_genre_top_book:
-                estimates["worst_genre_estimate"] = {"error": f"Could not find top book for {worst_genre_name}"}
-                return estimates
-            
-            # Find position of worst genre's top book on main Rising Stars
-            worst_genre_top_book_main_position = next(
-                (b["position"] for b in main_rs_books if b["book_id"] == worst_genre_top_book["book_id"]), 
-                None
+            worst_estimate = process_genre_estimate(
+                worst_genre_name, 
+                worst_genre_position, 
+                main_rs_books, 
+                headers
             )
-            
-            # Find the bottom book with the same tag on main Rising Stars
-            main_rs_with_tag = [b for b in main_rs_books if worst_genre_name in b["tags"]]
-            main_rs_bottom_with_tag = max(main_rs_with_tag, key=lambda x: x["position"]) if main_rs_with_tag else None
-            
-            worst_estimate = {}
-            if worst_genre_top_book_main_position and main_rs_bottom_with_tag:
-                # Calculate scaling factor
-                worst_genre_bottom_position = next(
-                    (b["position"] for b in worst_genre_books if b["book_id"] == main_rs_bottom_with_tag["book_id"]),
-                    len(worst_genre_books)  # Assume it would be at the bottom if not found
-                )
-                
-                # Print all the intermediate findings
-                logging.info(f"📊 WORST GENRE ANALYSIS:")
-                logging.info(f"📊 Genre: {worst_genre_name}, Book position: #{worst_genre_position}")
-                logging.info(f"📊 Top book from {worst_genre_name}: {worst_genre_top_book['title']} (ID: {worst_genre_top_book['book_id']})")
-                logging.info(f"📊 Top book position on Main RS: #{worst_genre_top_book_main_position}")
-                logging.info(f"📊 Bottom book from Main RS with {worst_genre_name} tag: {main_rs_bottom_with_tag['title']} (pos #{main_rs_bottom_with_tag['position']})")
-                
-                if worst_genre_bottom_position > worst_genre_position:
-                    # Calculate how many positions between top and bottom books
-                    main_rs_span = main_rs_bottom_with_tag["position"] - worst_genre_top_book_main_position
-                    genre_rs_span = worst_genre_bottom_position - 1  # 1 is the top position
-                    
-                    # Calculate scaling factor (how many main RS positions per genre position)
-                    scaling_factor = main_rs_span / genre_rs_span if genre_rs_span > 0 else 1
-                    
-                    # Calculate estimated positions to Main RS
-                    positions_to_scale = worst_genre_position - 1  # Distance from top
-                    estimated_distance = int(positions_to_scale * scaling_factor)
-                    estimated_position = worst_genre_top_book_main_position + estimated_distance
-                    
-                    worst_estimate = {
-                        "genre": worst_genre_name,
-                        "book_genre_position": worst_genre_position,
-                        "top_book_main_position": worst_genre_top_book_main_position,
-                        "bottom_tag_book_main_position": main_rs_bottom_with_tag["position"],
-                        "bottom_tag_book_genre_position": worst_genre_bottom_position,
-                        "scaling_factor": scaling_factor,
-                        "estimated_distance": estimated_distance,
-                        "estimated_position": estimated_position,
-                        "main_rs_size": len(main_rs_books),
-                        "positions_away_from_bottom": max(0, len(main_rs_books) - estimated_position)
-                    }
-                    
-                    # Log the estimate
-                    logging.info(f"📉 WORST ESTIMATE: Book would be around position #{estimated_position} on Main RS")
-                    logging.info(f"📉 This is {estimated_distance} positions away from the top book of {worst_genre_name}")
-                    if estimated_position <= len(main_rs_books):
-                        logging.info(f"📉 The book is estimated to be IN the Main Rising Stars list!")
-                    else:
-                        positions_away = estimated_position - len(main_rs_books)
-                        logging.info(f"📉 The book is estimated to be {positions_away} positions away from joining Main Rising Stars")
-                else:
-                    worst_estimate = {
-                        "message": f"Book is already higher than the lowest {worst_genre_name} book on Main RS",
-                        "genre": worst_genre_name,
-                        "book_genre_position": worst_genre_position,
-                        "top_book_main_position": worst_genre_top_book_main_position,
-                        "bottom_tag_book_main_position": main_rs_bottom_with_tag["position"],
-                        "main_rs_size": len(main_rs_books)
-                    }
-            else:
-                worst_estimate = {
-                    "message": "Could not find enough reference books to make an estimate from worst genre",
-                    "genre": worst_genre_name,
-                    "book_genre_position": worst_genre_position,
-                    "top_book_main_position": worst_genre_top_book_main_position,
-                    "main_rs_size": len(main_rs_books)
-                }
-            
             estimates["worst_genre_estimate"] = worst_estimate
         
         # Create a combined estimate
-        combined_estimate = {}
-        if "estimated_position" in best_estimate and "estimated_position" in worst_estimate:
-            # Use the average if we have both estimates
-            combined_position = (best_estimate["estimated_position"] + worst_estimate["estimated_position"]) / 2
-            combined_estimate = {
-                "estimated_position": int(combined_position),
-                "best_genre_estimate": best_estimate["estimated_position"],
-                "worst_genre_estimate": worst_estimate["estimated_position"],
-                "main_rs_size": len(main_rs_books)
-            }
-            
-            if combined_position <= len(main_rs_books):
-                combined_estimate["status"] = "IN_RANGE"
-                combined_estimate["message"] = f"Book is estimated to be in the Main Rising Stars at around position #{int(combined_position)}"
-            else:
-                positions_away = int(combined_position - len(main_rs_books))
-                combined_estimate["status"] = "OUTSIDE_RANGE"
-                combined_estimate["message"] = f"Book is estimated to be {positions_away} positions away from joining Main Rising Stars"
-                combined_estimate["positions_away"] = positions_away
-        elif "estimated_position" in best_estimate:
-            # Only have best genre estimate
-            if best_estimate["estimated_position"] <= len(main_rs_books):
-                combined_estimate["status"] = "IN_RANGE"
-                combined_estimate["message"] = f"Book is estimated to be in the Main Rising Stars at around position #{best_estimate['estimated_position']}"
-            else:
-                positions_away = best_estimate["estimated_position"] - len(main_rs_books)
-                combined_estimate["status"] = "OUTSIDE_RANGE"
-                combined_estimate["message"] = f"Book is estimated to be {positions_away} positions away from joining Main Rising Stars"
-                combined_estimate["positions_away"] = positions_away
-            
-            combined_estimate["estimated_position"] = best_estimate["estimated_position"]
-            combined_estimate["best_genre_estimate"] = best_estimate["estimated_position"]
-            combined_estimate["main_rs_size"] = len(main_rs_books)
+        combined_estimate = create_combined_estimate(best_estimate, 
+                                                     estimates.get("worst_genre_estimate"),
+                                                     len(main_rs_books))
         
         estimates["combined_estimate"] = combined_estimate
         
+        # Cache the result
+        with cache_lock:
+            cache[f"distance_estimate_{book_id}"] = estimates
+            
         return estimates
     
     except Exception as e:
@@ -654,24 +629,25 @@ def clear_cache():
 
 @app.route('/check_rising_stars', methods=['GET'])
 def api_rising_stars():
+    start_time = time.time()
+    request_id = f"req_{random.randint(10000, 99999)}"
+    
     book_url = request.args.get('book_url', '').strip()
     estimate_distance_param = request.args.get('estimate_distance', 'false').lower() == 'true'
     
     # Logging for debugging
-    logging.critical(f"🔍 Received book_url: {book_url}")
-    logging.critical(f"🔍 Estimate distance: {estimate_distance_param}")
+    logging.critical(f"🔍 [{request_id}] Received book_url: {book_url}")
+    logging.critical(f"🔍 [{request_id}] Estimate distance: {estimate_distance_param}")
 
     # Validate book URL
     if not book_url or "royalroad.com" not in book_url:
-        logging.error("❌ Invalid Royal Road URL")
+        logging.error(f"❌ [{request_id}] Invalid Royal Road URL")
         return jsonify({
             "error": "Invalid Royal Road URL", 
             "results": {}, 
             "title": "Unknown Title",
-            "debug_info": {
-                "book_url": book_url,
-                "estimate_distance_param": estimate_distance_param
-            }
+            "request_id": request_id,
+            "processing_time": f"{time.time() - start_time:.2f} seconds"
         }), 400
 
     # Get book details
@@ -679,110 +655,132 @@ def api_rising_stars():
         title, book_id, tags = get_title_and_tags(book_url)
 
         if not book_id or not tags:
-            logging.error("❌ Failed to retrieve book details")
+            logging.error(f"❌ [{request_id}] Failed to retrieve book details")
             return jsonify({
                 "error": "Failed to retrieve book details", 
                 "title": title, 
                 "results": {},
-                "debug_info": {
-                    "book_url": book_url,
-                    "estimate_distance_param": estimate_distance_param
-                }
+                "request_id": request_id,
+                "processing_time": f"{time.time() - start_time:.2f} seconds"
             }), 500
     
     except Exception as e:
-        logging.exception(f"❌ Unexpected error processing book URL: {str(e)}")
+        logging.exception(f"❌ [{request_id}] Unexpected error processing book URL: {str(e)}")
         return jsonify({
             "error": f"Unexpected error: {str(e)}",
-            "debug_info": {
-                "book_url": book_url,
-                "estimate_distance_param": estimate_distance_param
-            }
+            "request_id": request_id,
+            "processing_time": f"{time.time() - start_time:.2f} seconds"
         }), 500
     
+    # Prepare headers for requests
+    headers = {
+        "User-Agent": random.choice(USER_AGENTS),
+        "Accept": "text/html,application/xhtml+xml,application/xml",
+        "Accept-Language": "en-US,en;q=0.9",
+        "Referer": "https://www.royalroad.com/",
+        "DNT": "1"
+    }
+    
     # Approach to handle partial results with correct continuation
-    start_index = 0
     final_results = {}
     
-    # Ensure we start with the results from checking the Main Rising Stars
-    try:
-        headers = {
-            "User-Agent": random.choice(USER_AGENTS),
-            "Accept": "text/html,application/xhtml+xml,application/xml",
-            "Accept-Language": "en-US,en;q=0.9",
-            "Referer": "https://www.royalroad.com/",
-            "DNT": "1"
-        }
-        
-        logging.info("🔍 Checking Main Rising Stars list...")
-        response = fetch_with_retries(MAIN_RISING_STARS_URL, headers)
-        soup = BeautifulSoup(response.text, 'html.parser')
-        
-        book_links = soup.find_all("a", class_="font-red-sunglo")
-        book_ids = []
-        for link in book_links:
-            try:
-                link_parts = link.get('href', '').split('/')
-                if len(link_parts) >= 3:
-                    book_ids.append(link_parts[2])
-            except Exception as e:
-                logging.warning(f"⚠️ Error extracting book ID from link: {e}")
-
-        if book_id in book_ids:
-            position = book_ids.index(book_id) + 1
-            main_result = f"✅ Found in position #{position}"
-            logging.info(f"✅ Book {book_id} found in Main Rising Stars at position {position}")
+    # Check if we have cached results for main rising stars
+    cache_key_main_result = f"main_rs_result_{book_id}"
+    with cache_lock:
+        if cache_key_main_result in cache:
+            final_results["Main Rising Stars"] = cache[cache_key_main_result]
+            logging.info(f"📋 [{request_id}] Cache hit for main rising stars result: {book_id}")
         else:
-            main_result = "❌ Not found in Main Rising Stars list"
-            logging.info(f"❌ Book {book_id} not found in Main Rising Stars")
-        
-        final_results["Main Rising Stars"] = main_result
+            # Ensure we start with the results from checking the Main Rising Stars
+            try:
+                logging.info(f"🔍 [{request_id}] Checking Main Rising Stars list...")
+                response = fetch_with_retries(MAIN_RISING_STARS_URL, headers, timeout=15)
+                soup = BeautifulSoup(response.text, 'html.parser')
+                
+                book_links = soup.find_all("a", class_="font-red-sunglo")
+                book_ids = []
+                for link in book_links:
+                    try:
+                        link_parts = link.get('href', '').split('/')
+                        if len(link_parts) >= 3:
+                            book_ids.append(link_parts[2])
+                    except Exception as e:
+                        logging.warning(f"⚠️ [{request_id}] Error extracting book ID from link: {e}")
+
+                if book_id in book_ids:
+                    position = book_ids.index(book_id) + 1
+                    main_result = f"✅ Found in position #{position}"
+                    logging.info(f"✅ [{request_id}] Book {book_id} found in Main Rising Stars at position {position}")
+                else:
+                    main_result = "❌ Not found in Main Rising Stars list"
+                    logging.info(f"❌ [{request_id}] Book {book_id} not found in Main Rising Stars")
+                
+                final_results["Main Rising Stars"] = main_result
+                
+                # Cache the result
+                with cache_lock:
+                    cache[cache_key_main_result] = main_result
+            
+            except Exception as e:
+                logging.exception(f"⚠️ [{request_id}] Failed to check Main Rising Stars: {str(e)}")
+                final_results["Main Rising Stars"] = f"⚠️ Failed to check: {str(e)}"
     
-    except Exception as e:
-        logging.exception(f"⚠️ Failed to check Main Rising Stars: {str(e)}")
-        final_results["Main Rising Stars"] = f"⚠️ Failed to check: {str(e)}"
+    # Check for cached genre results
+    genres_processed = []
+    for tag in tags:
+        cache_key_genre = f"genre_result_{book_id}_{tag}"
+        with cache_lock:
+            if cache_key_genre in cache:
+                final_results[tag] = cache[cache_key_genre]
+                genres_processed.append(tag)
+                logging.info(f"📋 [{request_id}] Cache hit for genre result: {tag}")
     
-    # Continue checking from the first tag
-    while start_index < len(tags):
+    # Process remaining genres
+    remaining_tags = [tag for tag in tags if tag not in genres_processed]
+    for tag in remaining_tags:
         try:
-            genre_results, next_index = check_rising_stars(book_id, tags, start_index)
+            url = f"{GENRE_RISING_STARS_URL}{tag}"
+            logging.info(f"🔍 [{request_id}] Checking Rising Stars for genre: {tag}")
             
-            # Update final results with new results
-            final_results.update(genre_results)
+            response = fetch_with_retries(url, headers, timeout=15)
+            soup = BeautifulSoup(response.text, 'html.parser')
             
-            # If all tags were processed, break the loop
-            if next_index == len(tags):
-                break
+            book_links = soup.find_all("a", class_="font-red-sunglo")
+            book_ids = [link.get('href', '').split('/')[2] for link in book_links]
+
+            if book_id in book_ids:
+                position = book_ids.index(book_id) + 1
+                result = f"✅ Found in position #{position}"
+                logging.info(f"✅ [{request_id}] Book {book_id} found in {tag} at position {position}")
+            else:
+                result = f"❌ Not found in '{tag}' Rising Stars list"
+                logging.info(f"❌ [{request_id}] Book {book_id} not found in {tag}")
             
-            # If a tag failed, update start_index and continue
-            start_index = next_index
+            final_results[tag] = result
+            
+            # Cache the result
+            with cache_lock:
+                cache[f"genre_result_{book_id}_{tag}"] = result
+
         except Exception as e:
-            logging.exception(f"❌ Critical error during rising stars check: {str(e)}")
-            final_results["critical_error"] = f"Critical error: {str(e)}"
-            break
+            logging.exception(f"⚠️ [{request_id}] Failed to check {tag} Rising Stars: {str(e)}")
+            final_results[tag] = f"⚠️ Failed to check: {str(e)}"
     
     # Distance estimation logic with improved error handling
     distance_estimate = {}
     if estimate_distance_param:
         try:
-            distance_estimate = estimate_distance_to_main_rs(book_id, final_results, tags, headers)
+            cache_key_distance = f"distance_estimate_{book_id}"
+            with cache_lock:
+                if cache_key_distance in cache:
+                    distance_estimate = cache[cache_key_distance]
+                    logging.info(f"📋 [{request_id}] Cache hit for distance estimate: {book_id}")
+                else:
+                    distance_estimate = estimate_distance_to_main_rs(book_id, final_results, tags, headers)
+                    # Cache is handled inside the estimate_distance_to_main_rs function
         except Exception as e:
-            logging.critical(f"❌ CRITICAL ERROR during distance estimation: {str(e)}")
+            logging.critical(f"❌ [{request_id}] CRITICAL ERROR during distance estimation: {str(e)}")
             distance_estimate = {"error": f"Error during estimation: {str(e)}"}
-            
-            # If an error occurs during distance estimation, still return the results collected so far
-            response_data = {
-                "title": title, 
-                "results": final_results,
-                "book_id": book_id,
-                "tags": tags,
-                "debug_info": {
-                    "book_url": book_url,
-                    "estimate_distance_param": estimate_distance_param,
-                    "distance_estimation_error": str(e)
-                }
-            }
-            return jsonify(response_data)
     
     # Build response
     response_data = {
@@ -790,16 +788,14 @@ def api_rising_stars():
         "results": final_results,
         "book_id": book_id,
         "tags": tags,
-        "debug_info": {
-            "book_url": book_url,
-            "estimate_distance_param": estimate_distance_param
-        }
+        "request_id": request_id,
+        "processing_time": f"{time.time() - start_time:.2f} seconds"
     }
     
     # Add distance estimate if it was requested and generated
     if estimate_distance_param and distance_estimate:
         response_data["distance_estimate"] = distance_estimate
-        logging.critical("✅ Distance estimate ADDED to response")
+        logging.critical(f"✅ [{request_id}] Distance estimate ADDED to response")
     
     return jsonify(response_data)
 
