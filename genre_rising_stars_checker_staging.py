@@ -774,11 +774,57 @@ def api_rising_stars():
             }
         }), 500
     
-    # New approach to handle partial results
+    # Approach to handle partial results with correct continuation
     start_index = 0
+    final_results = {}
+    
+    # Ensure we start with the results from checking the Main Rising Stars
+    main_results = {}
+    try:
+        headers = {
+            "User-Agent": random.choice(USER_AGENTS),
+            "Accept": "text/html,application/xhtml+xml,application/xml",
+            "Accept-Language": "en-US,en;q=0.9",
+            "Referer": "https://www.royalroad.com/",
+            "DNT": "1"
+        }
+        
+        logging.info("🔍 Checking Main Rising Stars list...")
+        response = fetch_with_retries(MAIN_RISING_STARS_URL, headers)
+        soup = BeautifulSoup(response.text, 'html.parser')
+        
+        book_links = soup.find_all("a", class_="font-red-sunglo")
+        book_ids = []
+        for link in book_links:
+            try:
+                link_parts = link.get('href', '').split('/')
+                if len(link_parts) >= 3:
+                    book_ids.append(link_parts[2])
+            except Exception as e:
+                logging.warning(f"⚠️ Error extracting book ID from link: {e}")
+
+        if book_id in book_ids:
+            position = book_ids.index(book_id) + 1
+            main_results["Main Rising Stars"] = f"✅ Found in position #{position}"
+            logging.info(f"✅ Book {book_id} found in Main Rising Stars at position {position}")
+        else:
+            main_results["Main Rising Stars"] = "❌ Not found in Main Rising Stars list"
+            logging.info(f"❌ Book {book_id} not found in Main Rising Stars")
+    
+    except Exception as e:
+        logging.exception(f"⚠️ Failed to check Main Rising Stars: {str(e)}")
+        main_results["Main Rising Stars"] = f"⚠️ Failed to check: {str(e)}"
+    
+    # Add main results to final results
+    final_results.update(main_results)
+    
+    # Continue checking from the first tag
     while start_index < len(tags):
         try:
             results, next_index = check_rising_stars(book_id, tags, start_index)
+            
+            # Update final results with new results
+            final_results.update(results)
             
             # If all tags were processed, break the loop
             if next_index == len(tags):
@@ -788,81 +834,32 @@ def api_rising_stars():
             start_index = next_index
         except Exception as e:
             logging.exception(f"❌ Critical error during rising stars check: {str(e)}")
-            results = {"error": f"Critical error: {str(e)}"}
+            final_results["critical_error"] = f"Critical error: {str(e)}"
             break
     
-    # Additional fallback logging
-    logging.critical(f"🚨 FINAL estimate_distance: {estimate_distance}")
-
-    if not book_url or "royalroad.com" not in book_url:
-        logging.error("❌ Invalid Royal Road URL")
-        return jsonify({
-            "error": "Invalid Royal Road URL", 
-            "results": {}, 
-            "title": "Unknown Title",
-            "debug_info": {
-                "book_url": book_url,
-                "estimate_distance_param": estimate_distance_param
-            }
-        }), 400
-
-    title, book_id, tags = get_title_and_tags(book_url)
-
-    if not book_id or not tags:
-        logging.error("❌ Failed to retrieve book details")
-        return jsonify({
-            "error": "Failed to retrieve book details", 
-            "title": title, 
-            "results": {},
-            "debug_info": {
-                "book_url": book_url,
-                "estimate_distance_param": estimate_distance_param
-            }
-        }), 500
-        
-    results = check_rising_stars(book_id, tags)
-    
-    # Distance estimation logic with extensive logging
+    # Distance estimation logic remains the same
     distance_estimate = {}
-    logging.critical(f"🚨 DISTANCE ESTIMATION ATTEMPT: {estimate_distance}")
-    
-    if estimate_distance:
-        logging.critical(f"📏 Distance estimation CONFIRMED for book: {title}")
-        
-        # Get headers for API requests
-        headers = {
-            "User-Agent": random.choice(USER_AGENTS),
-            "Accept": "text/html,application/xhtml+xml,application/xml",
-            "Accept-Language": "en-US,en;q=0.9",
-            "Referer": "https://www.royalroad.com/",
-            "DNT": "1"
-        }
-        
+    if estimate_distance_param:
         try:
-            logging.critical("🔍 Attempting to estimate distance to Main Rising Stars...")
-            distance_estimate = estimate_distance_to_main_rs(book_id, results, tags, headers)
-            logging.critical(f"📏 Distance estimation COMPLETED: {distance_estimate}")
+            distance_estimate = estimate_distance_to_main_rs(book_id, final_results, tags, headers)
         except Exception as e:
             logging.critical(f"❌ CRITICAL ERROR during distance estimation: {str(e)}")
             distance_estimate = {"error": f"Error during estimation: {str(e)}"}
-    else:
-        logging.critical("⚠️ Distance estimation was EXPLICITLY NOT REQUESTED")
     
     # Build response
     response_data = {
         "title": title, 
-        "results": results,
+        "results": final_results,
         "book_id": book_id,
         "tags": tags,
         "debug_info": {
             "book_url": book_url,
-            "estimate_distance_param": estimate_distance_param,
-            "parsed_estimate_distance": estimate_distance
+            "estimate_distance_param": estimate_distance_param
         }
     }
     
     # Add distance estimate if it was requested and generated
-    if estimate_distance and distance_estimate:
+    if estimate_distance_param and distance_estimate:
         response_data["distance_estimate"] = distance_estimate
         logging.critical("✅ Distance estimate ADDED to response")
     
