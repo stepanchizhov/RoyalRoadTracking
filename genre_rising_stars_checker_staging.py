@@ -531,7 +531,7 @@ def create_combined_estimate(best_estimate, worst_estimate, middle_estimate, mai
 def estimate_distance_to_main_rs(book_id, genre_results, tags, headers):
     """
     Estimate how far the book is from the main Rising Stars list.
-    Modified to handle timeouts better and select the most suitable genres.
+    Modified with minimized delays to avoid worker timeouts.
     """
     # Check cache first
     cache_key = f"distance_estimate_{book_id}"
@@ -571,11 +571,6 @@ def estimate_distance_to_main_rs(book_id, genre_results, tags, headers):
         # Sort genres by the book's position (best to worst)
         sorted_genres = sorted(book_positions.items(), key=lambda x: x[1])
         
-        # Add a human-like delay after initial data gathering
-        human_delay = get_random_delay()
-        logging.info(f"⏳ Human-like delay: waiting {human_delay:.2f} seconds...")
-        time.sleep(human_delay)
-        
         # Find suitable genres for estimation
         suitable_genres = []
         for genre_name, genre_position in sorted_genres:
@@ -609,10 +604,7 @@ def estimate_distance_to_main_rs(book_id, genre_results, tags, headers):
                 else:
                     logging.info(f"⚠️ Genre {genre_name} has only {len(common_books)} common books")
             
-            # Add a human-like delay between checking each genre
-            human_delay = get_random_delay()
-            logging.info(f"⏳ Human-like delay: waiting {human_delay:.2f} seconds...")
-            time.sleep(human_delay)
+            # No delay here - we'll rely on network latency between requests
         
         # If we have no suitable genres, use the original sorting
         if not suitable_genres and sorted_genres:
@@ -651,10 +643,7 @@ def estimate_distance_to_main_rs(book_id, genre_results, tags, headers):
             genre_estimate = process_genre_estimate(genre_name, genre_position, main_rs_books, headers)
             estimates[f"{label}_genre_estimate"] = genre_estimate
             
-            # Add a human-like delay between processing each genre
-            human_delay = get_random_delay()
-            logging.info(f"⏳ Human-like delay: waiting {human_delay:.2f} seconds...")
-            time.sleep(human_delay)
+            # No explicit delay here - rely on network latency
         
         # Create a combined estimate
         combined_estimate = create_combined_estimate(
@@ -675,7 +664,6 @@ def estimate_distance_to_main_rs(book_id, genre_results, tags, headers):
     except Exception as e:
         logging.exception(f"❌ Error estimating distance to main Rising Stars: {str(e)}")
         return {"error": f"Error estimating distance: {str(e)}"}
-
 
 def check_rising_stars(book_id, tags, start_index=0):
     """Checks if the book appears in the main and genre-specific Rising Stars lists."""
