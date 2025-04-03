@@ -474,6 +474,10 @@ def create_combined_estimate(best_estimate, worst_estimate, middle_estimate, mai
     """Creates a combined estimate from best, worst, and middle genre estimates with prioritization of the worst estimate."""
     combined_estimate = {"main_rs_size": main_rs_size}
     
+    # Check if we have insufficient data message
+    if "insufficient_data" in best_estimate:
+        return best_estimate
+    
     # Check which estimates are valid
     best_valid = "estimated_position" in best_estimate
     worst_valid = worst_estimate and "estimated_position" in worst_estimate
@@ -567,6 +571,17 @@ def estimate_distance_to_main_rs(book_id, genre_results, tags, headers):
         
         if not book_positions:
             return {"message": "Book not found in any genre Rising Stars lists, cannot estimate distance"}
+        
+        # NEW: Check if the book is in at least two genre Rising Stars lists
+        if len(book_positions) < 2:
+            found_genre = list(book_positions.keys())[0]
+            found_position = book_positions[found_genre]
+            return {
+                "message": f"Your book is currently only on the {found_genre} Rising Stars list at position #{found_position}. For a more accurate distance estimate, please check again when your book appears on at least two genre Rising Stars lists.",
+                "insufficient_data": True,
+                "genre": found_genre,
+                "position": found_position
+            }
         
         # Sort genres by the book's position (best to worst)
         sorted_genres = sorted(book_positions.items(), key=lambda x: x[1])
@@ -914,7 +929,10 @@ def api_rising_stars():
                         logging.info(f"📋 [{request_id}] Cache hit for distance estimate: {book_id}")
                     else:
                         distance_estimate = estimate_distance_to_main_rs(book_id, final_results, tags, headers)
-                        # Cache is handled inside the estimate_distance_to_main_rs function
+                        # If it's not an error and not "insufficient_data", cache it
+                        if "error" not in distance_estimate and "insufficient_data" not in distance_estimate:
+                            with cache_lock:
+                                cache[cache_key_distance] = distance_estimate
             except Exception as e:
                 logging.critical(f"❌ [{request_id}] CRITICAL ERROR during distance estimation: {str(e)}")
                 distance_estimate = {"error": f"Error during estimation: {str(e)}"}
