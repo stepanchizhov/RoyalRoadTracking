@@ -294,20 +294,25 @@ def get_books_for_genre(genre, headers):
             title_link = entry.find("a", class_="font-red-sunglo")
             if not title_link:
                 continue
+            
+            href = title_link.get("href", "")
+            if not href or "/" not in href:
+                continue
                 
-            book_id = title_link["href"].split("/")[2]
+            try:
+                book_id = href.split("/")[2]
+                # Extract book title
+                title = title_link.text.strip()
+                
+                genre_books.append({
+                    "position": position,
+                    "book_id": book_id,
+                    "title": title
+                })
+            except (IndexError, ValueError) as e:
+                logging.warning(f"⚠️ Could not parse book link {href}: {e}")
+                continue
             
-            # Extract book title
-            title = title_link.text.strip()
-            
-            genre_books.append({
-                "position": position,
-                "book_id": book_id,
-                "title": title
-            })
-            
-            logging.info(f"📚 {genre} RS #{position}: {title} (ID: {book_id})")
-        
         # Cache the results
         with cache_lock:
             cache[cache_key] = genre_books
@@ -319,25 +324,42 @@ def get_books_for_genre(genre, headers):
         return []
 
 def process_genre_estimate(genre_name, genre_position, main_rs_books, headers):
-    """Helper function to process a single genre's estimate with improved scaling logic."""
+    """
+    Helper function to process a single genre's estimate with improved scaling logic.
+    Optimized for speed and accuracy.
+    """
     try:
-        # Get all books from genre Rising Stars
-        genre_books = get_books_for_genre(genre_name, headers)
+        # Check cache first for genre books
+        cache_key = f"genre_books_{genre_name}"
+        with cache_lock:
+            if cache_key in cache:
+                genre_books = cache[cache_key]
+                logging.info(f"📋 Cache hit for genre books: {genre_name}")
+            else:
+                # Get all books from genre Rising Stars
+                genre_books = get_books_for_genre(genre_name, headers)
+                
+                # Cache the result if successful
+                if genre_books:
+                    with cache_lock:
+                        cache[cache_key] = genre_books
+        
         if not genre_books:
             return {"error": f"Could not fetch books for {genre_name} Rising Stars"}
         
         # Find books that appear in both lists (genre list and main RS)
         common_books = []
-        for genre_book in genre_books:
-            for main_book in main_rs_books:
-                if genre_book["book_id"] == main_book["book_id"]:
-                    common_books.append({
-                        "book_id": genre_book["book_id"],
-                        "title": genre_book["title"],
-                        "genre_position": genre_book["position"],
-                        "main_position": main_book["position"]
-                    })
-                    break
+        genre_book_ids = {book["book_id"]: book for book in genre_books}
+        main_book_ids = {book["book_id"]: book for book in main_rs_books}
+        
+        # More efficient intersection using dictionary lookups
+        for book_id in set(genre_book_ids.keys()) & set(main_book_ids.keys()):
+            common_books.append({
+                "book_id": book_id,
+                "title": genre_book_ids[book_id]["title"],
+                "genre_position": genre_book_ids[book_id]["position"],
+                "main_position": main_book_ids[book_id]["position"]
+            })
         
         # If we don't have any common books, we can't make an estimate
         if not common_books:
@@ -352,11 +374,11 @@ def process_genre_estimate(genre_name, genre_position, main_rs_books, headers):
             }
         
         # Sort by main position (lowest to highest)
-        common_books_by_main = sorted(common_books, key=lambda x: x["main_position"])
+        common_books.sort(key=lambda x: x["main_position"])
         
         # Get the highest and lowest books on main RS
-        highest_on_main = common_books_by_main[0]
-        lowest_on_main = common_books_by_main[-1]
+        highest_on_main = common_books[0]
+        lowest_on_main = common_books[-1]
         
         # Make sure we add the top book's main position explicitly
         top_book_main_position = highest_on_main["main_position"]
@@ -364,7 +386,7 @@ def process_genre_estimate(genre_name, genre_position, main_rs_books, headers):
         top_book_title = highest_on_main["title"]
         
         # If we only have one common book, we'll use a simple scaling factor
-        if len(common_books_by_main) <= 1 or highest_on_main["book_id"] == lowest_on_main["book_id"]:
+        if len(common_books) <= 1 or highest_on_main["book_id"] == lowest_on_main["book_id"]:
             # We only have one reference point
             reference_book = highest_on_main
             
@@ -413,15 +435,8 @@ def process_genre_estimate(genre_name, genre_position, main_rs_books, headers):
         logging.info(f"📊 DETAILED GENRE ANALYSIS: {genre_name}")
         logging.info(f"📊 Book position in {genre_name}: #{genre_position}")
         logging.info(f"📊 Found {len(common_books)} common books between {genre_name} and Main Rising Stars")
-        for i, book in enumerate(common_books_by_main):
-            logging.info(f"📊 Common Book #{i+1}: {book['title']} - Genre #{book['genre_position']}, Main #{book['main_position']}")
         logging.info(f"📊 Calculated scaling factor: {scaling_factor:.2f}")
         logging.info(f"📊 Estimated position on Main RS: #{estimated_position}")
-        
-        if positions_away > 0:
-            logging.info(f"📊 Book is estimated to be {positions_away} positions away from joining Main Rising Stars")
-        else:
-            logging.info(f"📊 Book is estimated to be IN the Main Rising Stars list!")
         
         # Build the result
         genre_estimate = {
@@ -433,19 +448,7 @@ def process_genre_estimate(genre_name, genre_position, main_rs_books, headers):
             "common_books_count": len(common_books),
             "top_book_main_position": top_book_main_position,
             "top_book_id": top_book_id,
-            "top_book_title": top_book_title,
-            "highest_common_book": {
-                "title": highest_on_main["title"],
-                "genre_position": highest_on_main["genre_position"],
-                "main_position": highest_on_main["main_position"],
-                "book_id": highest_on_main["book_id"]
-            },
-            "lowest_common_book": {
-                "title": lowest_on_main["title"],
-                "genre_position": lowest_on_main["genre_position"],
-                "main_position": lowest_on_main["main_position"],
-                "book_id": lowest_on_main["book_id"]
-            } if len(common_books_by_main) > 1 and highest_on_main["book_id"] != lowest_on_main["book_id"] else None
+            "top_book_title": top_book_title
         }
         
         # Add status information
@@ -469,23 +472,38 @@ def process_genre_estimate(genre_name, genre_position, main_rs_books, headers):
             "top_book_id": None,
             "top_book_title": None
         }
-
+        
 def create_combined_estimate(best_estimate, worst_estimate, middle_estimate, main_rs_size):
-    """Creates a combined estimate from best, worst, and middle genre estimates with prioritization of the worst estimate."""
+    """
+    Creates a combined estimate from selected genre estimates.
+    Prioritizes estimates based on reliability indicators.
+    """
     combined_estimate = {"main_rs_size": main_rs_size}
     
     # Check which estimates are valid
-    best_valid = "estimated_position" in best_estimate
+    best_valid = best_estimate and "estimated_position" in best_estimate
     worst_valid = worst_estimate and "estimated_position" in worst_estimate
     middle_valid = middle_estimate and "estimated_position" in middle_estimate
     
     valid_estimates = []
     if best_valid:
-        valid_estimates.append(("best", best_estimate))
+        valid_estimates.append((
+            "best", 
+            best_estimate, 
+            best_estimate.get("common_books_count", 0)
+        ))
     if worst_valid:
-        valid_estimates.append(("worst", worst_estimate))
+        valid_estimates.append((
+            "worst", 
+            worst_estimate, 
+            worst_estimate.get("common_books_count", 0)
+        ))
     if middle_valid:
-        valid_estimates.append(("middle", middle_estimate))
+        valid_estimates.append((
+            "middle", 
+            middle_estimate, 
+            middle_estimate.get("common_books_count", 0)
+        ))
     
     if not valid_estimates:
         # No valid estimates
@@ -494,17 +512,23 @@ def create_combined_estimate(best_estimate, worst_estimate, middle_estimate, mai
         return combined_estimate
     
     # Add all estimated positions to the combined estimate for reference
-    for label, estimate in valid_estimates:
+    for label, estimate, _ in valid_estimates:
         combined_estimate[f"{label}_genre_estimate"] = estimate["estimated_position"]
     
-    # CHANGED: Prioritize the worst estimate (highest position number)
-    # Sort by estimated position in descending order (highest/worst first)
-    valid_estimates.sort(key=lambda x: x[1]["estimated_position"], reverse=True)
-    selected_label, selected_estimate = valid_estimates[0]
+    # First prioritize by number of common books (more is better)
+    valid_estimates.sort(key=lambda x: x[2], reverse=True)
     
-    # Use the worst (highest number) estimate
+    # If the top two have the same number of common books, choose the worst estimate
+    if len(valid_estimates) >= 2 and valid_estimates[0][2] == valid_estimates[1][2]:
+        # Sort by estimated position in descending order (highest/worst first)
+        valid_estimates.sort(key=lambda x: x[1]["estimated_position"], reverse=True)
+    
+    selected_label, selected_estimate, _ = valid_estimates[0]
+    
+    # Use the selected estimate
     combined_estimate["estimated_position"] = selected_estimate["estimated_position"]
     combined_estimate["prioritized"] = selected_label
+    combined_estimate["prioritized_reason"] = "most reference books" if selected_label == "best" else "worst position"
     
     # Determine if the book is expected to be in range
     if selected_estimate["estimated_position"] <= main_rs_size:
@@ -518,7 +542,7 @@ def create_combined_estimate(best_estimate, worst_estimate, middle_estimate, mai
     
     # If we have multiple estimates, calculate an average as well
     if len(valid_estimates) > 1:
-        avg_position = sum(estimate["estimated_position"] for _, estimate in valid_estimates) / len(valid_estimates)
+        avg_position = sum(estimate["estimated_position"] for _, estimate, _ in valid_estimates) / len(valid_estimates)
         combined_estimate["average_position"] = int(round(avg_position))
         
         # Add a note about the average if it differs significantly from the prioritized estimate
@@ -531,7 +555,7 @@ def create_combined_estimate(best_estimate, worst_estimate, middle_estimate, mai
 def estimate_distance_to_main_rs(book_id, genre_results, tags, headers):
     """
     Estimate how far the book is from the main Rising Stars list.
-    Modified with minimized delays to avoid worker timeouts.
+    Optimized to selectively process only the most relevant genres.
     """
     # Check cache first
     cache_key = f"distance_estimate_{book_id}"
@@ -571,79 +595,41 @@ def estimate_distance_to_main_rs(book_id, genre_results, tags, headers):
         # Sort genres by the book's position (best to worst)
         sorted_genres = sorted(book_positions.items(), key=lambda x: x[1])
         
-        # Find suitable genres for estimation
-        suitable_genres = []
-        for genre_name, genre_position in sorted_genres:
-            # Process this genre to check if it's suitable
-            genre_books = get_books_for_genre(genre_name, headers)
-            common_books = []
-            
-            for genre_book in genre_books:
-                for main_book in main_rs_books:
-                    if genre_book["book_id"] == main_book["book_id"]:
-                        common_books.append({
-                            "book_id": genre_book["book_id"],
-                            "genre_position": genre_book["position"],
-                            "main_position": main_book["position"]
-                        })
-                        break
-            
-            # Sort by main position
-            if common_books:
-                common_books.sort(key=lambda x: x["main_position"])
-                
-                # Check if this genre has enough reference points
-                if len(common_books) > 1:
-                    # Check if the distance between first and last book is at least 5
-                    main_distance = common_books[-1]["main_position"] - common_books[0]["main_position"]
-                    if main_distance >= 5:
-                        suitable_genres.append((genre_name, genre_position, common_books))
-                        logging.info(f"✅ Genre {genre_name} is suitable for estimation with {len(common_books)} common books and distance {main_distance}")
-                    else:
-                        logging.info(f"⚠️ Genre {genre_name} has insufficient distance between reference books ({main_distance})")
-                else:
-                    logging.info(f"⚠️ Genre {genre_name} has only {len(common_books)} common books")
-            
-            # No delay here - we'll rely on network latency between requests
+        # Select only a subset of genres to process
+        # - Best position genre (always include)
+        # - Worst position genre (if different from best)
+        # - Middle position genre (if we have at least 3 genres)
         
-        # If we have no suitable genres, use the original sorting
-        if not suitable_genres and sorted_genres:
-            logging.info(f"⚠️ No suitable genres found, using original sorting")
-            for genre_name, genre_position in sorted_genres[:3]:  # Try top 3 genres
-                suitable_genres.append((genre_name, genre_position, []))
-        
-        # Process best, worst, and middle genres
         genres_to_process = []
         
-        if suitable_genres:
-            # Best genre (highest position/lowest number)
-            genres_to_process.append(("best", suitable_genres[0][0], suitable_genres[0][1]))
-            
-            # Worst genre (if we have at least 2 genres)
-            if len(suitable_genres) > 1:
-                genres_to_process.append(("worst", suitable_genres[-1][0], suitable_genres[-1][1]))
-            
-            # Middle genre (if we have at least 3 genres)
-            if len(suitable_genres) >= 3:
-                middle_index = len(suitable_genres) // 2
-                genres_to_process.append(("middle", suitable_genres[middle_index][0], suitable_genres[middle_index][1]))
-        else:
-            # Fallback to original sorting if no suitable genres
-            if sorted_genres:
-                genres_to_process.append(("best", sorted_genres[0][0], sorted_genres[0][1]))
-                if len(sorted_genres) > 1:
-                    genres_to_process.append(("worst", sorted_genres[-1][0], sorted_genres[-1][1]))
-                if len(sorted_genres) >= 3:
-                    middle_index = len(sorted_genres) // 2
-                    genres_to_process.append(("middle", sorted_genres[middle_index][0], sorted_genres[middle_index][1]))
+        # Always include the best genre (lowest position number)
+        if sorted_genres:
+            best_genre, best_position = sorted_genres[0]
+            genres_to_process.append(("best", best_genre, best_position))
+            logging.info(f"🎯 Selected best genre for estimation: {best_genre} at position #{best_position}")
+        
+        # Include worst genre if we have at least 2 genres and it's different from best
+        if len(sorted_genres) > 1:
+            worst_genre, worst_position = sorted_genres[-1]
+            if worst_genre != best_genre:
+                genres_to_process.append(("worst", worst_genre, worst_position))
+                logging.info(f"🎯 Selected worst genre for estimation: {worst_genre} at position #{worst_position}")
+        
+        # Include middle genre if we have at least 3 genres
+        if len(sorted_genres) >= 3:
+            middle_index = len(sorted_genres) // 2
+            middle_genre, middle_position = sorted_genres[middle_index]
+            if middle_genre != best_genre and middle_genre != worst_genre:
+                genres_to_process.append(("middle", middle_genre, middle_position))
+                logging.info(f"🎯 Selected middle genre for estimation: {middle_genre} at position #{middle_position}")
+        
+        logging.info(f"📊 Selected {len(genres_to_process)} genres for distance estimation out of {len(sorted_genres)} available")
         
         # Process each selected genre
         for label, genre_name, genre_position in genres_to_process:
             logging.info(f"🔍 Processing {label} genre: {genre_name} at position #{genre_position}")
             genre_estimate = process_genre_estimate(genre_name, genre_position, main_rs_books, headers)
             estimates[f"{label}_genre_estimate"] = genre_estimate
-            
-            # No explicit delay here - rely on network latency
         
         # Create a combined estimate
         combined_estimate = create_combined_estimate(
@@ -664,7 +650,7 @@ def estimate_distance_to_main_rs(book_id, genre_results, tags, headers):
     except Exception as e:
         logging.exception(f"❌ Error estimating distance to main Rising Stars: {str(e)}")
         return {"error": f"Error estimating distance: {str(e)}"}
-
+        
 def check_rising_stars(book_id, tags, start_index=0):
     """Checks if the book appears in the main and genre-specific Rising Stars lists."""
     results = {}
@@ -754,8 +740,8 @@ def api_rising_stars():
     estimate_distance_param = request.args.get('estimate_distance', 'false').lower() == 'true'
     
     # Logging for debugging
-    logging.critical(f"🔍 [{request_id}] Received book_url: {book_url}")
-    logging.critical(f"🔍 [{request_id}] Estimate distance: {estimate_distance_param}")
+    logging.info(f"🔍 [{request_id}] Received book_url: {book_url}")
+    logging.info(f"🔍 [{request_id}] Estimate distance: {estimate_distance_param}")
 
     # Validate book URL
     if not book_url or "royalroad.com" not in book_url:
@@ -799,7 +785,7 @@ def api_rising_stars():
         "DNT": "1"
     }
     
-    # Approach to handle partial results with correct continuation
+    # Final results container
     final_results = {}
     
     # Check if we have cached results for main rising stars
@@ -809,7 +795,7 @@ def api_rising_stars():
             final_results["Main Rising Stars"] = cache[cache_key_main_result]
             logging.info(f"📋 [{request_id}] Cache hit for main rising stars result: {book_id}")
         else:
-            # Ensure we start with the results from checking the Main Rising Stars
+            # Fetch main rising stars result
             try:
                 logging.info(f"🔍 [{request_id}] Checking Main Rising Stars list...")
                 response = fetch_with_retries(MAIN_RISING_STARS_URL, headers, timeout=15)
@@ -843,19 +829,15 @@ def api_rising_stars():
                 logging.exception(f"⚠️ [{request_id}] Failed to check Main Rising Stars: {str(e)}")
                 final_results["Main Rising Stars"] = f"⚠️ Failed to check: {str(e)}"
     
-    # Check for cached genre results
-    genres_processed = []
+    # Process genre results - we'll always check all genres to provide complete results
     for tag in tags:
         cache_key_genre = f"genre_result_{book_id}_{tag}"
         with cache_lock:
             if cache_key_genre in cache:
                 final_results[tag] = cache[cache_key_genre]
-                genres_processed.append(tag)
                 logging.info(f"📋 [{request_id}] Cache hit for genre result: {tag}")
-    
-    # Process remaining genres
-    remaining_tags = [tag for tag in tags if tag not in genres_processed]
-    for tag in remaining_tags:
+                continue
+        
         try:
             url = f"{GENRE_RISING_STARS_URL}{tag}"
             logging.info(f"🔍 [{request_id}] Checking Rising Stars for genre: {tag}")
@@ -864,7 +846,7 @@ def api_rising_stars():
             soup = BeautifulSoup(response.text, 'html.parser')
             
             book_links = soup.find_all("a", class_="font-red-sunglo")
-            book_ids = [link.get('href', '').split('/')[2] for link in book_links]
+            book_ids = [link.get('href', '').split('/')[2] for link in book_links if link.get('href', '')]
 
             if book_id in book_ids:
                 position = book_ids.index(book_id) + 1
@@ -898,9 +880,9 @@ def api_rising_stars():
     distance_estimate = {}
     if estimate_distance_param:
         if already_on_main_rs:
-            # Joking message when already on main list
+            # Skip estimation if already on main list
             distance_estimate = {
-                "message": f"Hey! Why are you wasting precious energy? Your book is already on the main Rising Stars list at position #{main_rs_position}! 🎉",
+                "message": f"Your book is already on the main Rising Stars list at position #{main_rs_position}! 🎉",
                 "already_on_main": True,
                 "main_position": main_rs_position
             }
@@ -913,8 +895,8 @@ def api_rising_stars():
                         distance_estimate = cache[cache_key_distance]
                         logging.info(f"📋 [{request_id}] Cache hit for distance estimate: {book_id}")
                     else:
+                        # Use our optimized estimation function
                         distance_estimate = estimate_distance_to_main_rs(book_id, final_results, tags, headers)
-                        # Cache is handled inside the estimate_distance_to_main_rs function
             except Exception as e:
                 logging.critical(f"❌ [{request_id}] CRITICAL ERROR during distance estimation: {str(e)}")
                 distance_estimate = {"error": f"Error during estimation: {str(e)}"}
@@ -932,7 +914,6 @@ def api_rising_stars():
     # Add distance estimate if it was requested and generated
     if estimate_distance_param and distance_estimate:
         response_data["distance_estimate"] = distance_estimate
-        logging.critical(f"✅ [{request_id}] Distance estimate ADDED to response")
     
     return jsonify(response_data)
 
