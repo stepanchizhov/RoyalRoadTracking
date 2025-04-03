@@ -363,7 +363,65 @@ def process_genre_estimate(genre_name, genre_position, main_rs_books, headers):
         top_book_id = highest_on_main["book_id"]
         top_book_title = highest_on_main["title"]
         
-        # Rest of the function remains the same...
+        # If we only have one common book, we'll use a simple scaling factor
+        if len(common_books_by_main) <= 1 or highest_on_main["book_id"] == lowest_on_main["book_id"]:
+            # We only have one reference point
+            reference_book = highest_on_main
+            
+            # Calculate distance from reference book in genre list
+            genre_distance = abs(genre_position - reference_book["genre_position"])
+            
+            # Use the position of the reference book as base for our estimate
+            if genre_position < reference_book["genre_position"]:
+                # Our book is higher in the genre list
+                estimated_position = max(1, reference_book["main_position"] - genre_distance)
+            else:
+                # Our book is lower in the genre list
+                estimated_position = reference_book["main_position"] + genre_distance
+            
+            scaling_factor = 1.0  # Default scaling when we only have one reference
+            
+        else:
+            # Calculate scaling factor using the highest and lowest books
+            main_distance = lowest_on_main["main_position"] - highest_on_main["main_position"]
+            genre_distance = abs(lowest_on_main["genre_position"] - highest_on_main["genre_position"])
+            
+            # Prevent division by zero
+            if genre_distance == 0:
+                genre_distance = 1
+                
+            scaling_factor = main_distance / genre_distance
+            
+            # Calculate our position relative to the highest book on the main list
+            genre_distance_from_highest = abs(genre_position - highest_on_main["genre_position"])
+            
+            # Apply the scaling factor to get estimated main list distance
+            if genre_position < highest_on_main["genre_position"]:
+                # Our book is higher in the genre list
+                estimated_position = max(1, highest_on_main["main_position"] - (genre_distance_from_highest * scaling_factor))
+            else:
+                # Our book is lower in the genre list
+                estimated_position = highest_on_main["main_position"] + (genre_distance_from_highest * scaling_factor)
+        
+        # Round to nearest integer
+        estimated_position = int(round(estimated_position))
+        
+        # Calculate positions away from joining main RS
+        positions_away = max(0, estimated_position - len(main_rs_books))
+        
+        # Log the analysis
+        logging.info(f"📊 DETAILED GENRE ANALYSIS: {genre_name}")
+        logging.info(f"📊 Book position in {genre_name}: #{genre_position}")
+        logging.info(f"📊 Found {len(common_books)} common books between {genre_name} and Main Rising Stars")
+        for i, book in enumerate(common_books_by_main):
+            logging.info(f"📊 Common Book #{i+1}: {book['title']} - Genre #{book['genre_position']}, Main #{book['main_position']}")
+        logging.info(f"📊 Calculated scaling factor: {scaling_factor:.2f}")
+        logging.info(f"📊 Estimated position on Main RS: #{estimated_position}")
+        
+        if positions_away > 0:
+            logging.info(f"📊 Book is estimated to be {positions_away} positions away from joining Main Rising Stars")
+        else:
+            logging.info(f"📊 Book is estimated to be IN the Main Rising Stars list!")
         
         # Build the result
         genre_estimate = {
@@ -387,7 +445,7 @@ def process_genre_estimate(genre_name, genre_position, main_rs_books, headers):
                 "genre_position": lowest_on_main["genre_position"],
                 "main_position": lowest_on_main["main_position"],
                 "book_id": lowest_on_main["book_id"]
-            } if highest_on_main["book_id"] != lowest_on_main["book_id"] else None
+            } if len(common_books_by_main) > 1 and highest_on_main["book_id"] != lowest_on_main["book_id"] else None
         }
         
         # Add status information
