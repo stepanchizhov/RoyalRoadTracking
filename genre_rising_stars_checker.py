@@ -471,7 +471,7 @@ def process_genre_estimate(genre_name, genre_position, main_rs_books, headers):
         }
 
 def create_combined_estimate(best_estimate, worst_estimate, middle_estimate, main_rs_size):
-    """Creates a combined estimate from best, worst, and middle genre estimates with prioritization."""
+    """Creates a combined estimate from best, worst, and middle genre estimates with prioritization of the worst estimate."""
     combined_estimate = {"main_rs_size": main_rs_size}
     
     # Check which estimates are valid
@@ -493,44 +493,28 @@ def create_combined_estimate(best_estimate, worst_estimate, middle_estimate, mai
         combined_estimate["message"] = "Could not calculate a position estimate with the available data"
         return combined_estimate
     
-    # Categorize estimates as in-range or out-of-range
-    in_range_estimates = []
-    out_of_range_estimates = []
-    
-    for label, estimate in valid_estimates:
-        if estimate["estimated_position"] <= main_rs_size:
-            in_range_estimates.append((label, estimate))
-        else:
-            out_of_range_estimates.append((label, estimate))
-    
     # Add all estimated positions to the combined estimate for reference
     for label, estimate in valid_estimates:
         combined_estimate[f"{label}_genre_estimate"] = estimate["estimated_position"]
     
-    # Prioritization logic
-    if in_range_estimates:
-        # At least one estimate puts the book in range
-        # Sort by position (prefer higher position numbers, closer to the cutoff)
-        in_range_estimates.sort(key=lambda x: x[1]["estimated_position"], reverse=True)
-        selected_label, selected_estimate = in_range_estimates[0]
-        
-        combined_estimate["estimated_position"] = selected_estimate["estimated_position"]
+    # CHANGED: Prioritize the worst estimate (highest position number)
+    # Sort by estimated position in descending order (highest/worst first)
+    valid_estimates.sort(key=lambda x: x[1]["estimated_position"], reverse=True)
+    selected_label, selected_estimate = valid_estimates[0]
+    
+    # Use the worst (highest number) estimate
+    combined_estimate["estimated_position"] = selected_estimate["estimated_position"]
+    combined_estimate["prioritized"] = selected_label
+    
+    # Determine if the book is expected to be in range
+    if selected_estimate["estimated_position"] <= main_rs_size:
         combined_estimate["status"] = "IN_RANGE"
-        combined_estimate["message"] = f"The book is estimated to be in the Main Rising Stars at around position #{selected_estimate['estimated_position']}"
-        combined_estimate["prioritized"] = selected_label
-        
+        combined_estimate["message"] = f"Book is estimated to be in the Main Rising Stars at around position #{selected_estimate['estimated_position']}"
     else:
-        # All estimates are out of range
-        # Sort by how close they are to the cutoff (prefer lower positions_away)
-        out_of_range_estimates.sort(key=lambda x: x[1]["estimated_position"] - main_rs_size)
-        selected_label, selected_estimate = out_of_range_estimates[0]
-        
         positions_away = selected_estimate["estimated_position"] - main_rs_size
-        combined_estimate["estimated_position"] = selected_estimate["estimated_position"]
         combined_estimate["status"] = "OUTSIDE_RANGE"
         combined_estimate["positions_away"] = positions_away
-        combined_estimate["message"] = f"The book is estimated to be at least {positions_away} positions away from joining Main Rising Stars"
-        combined_estimate["prioritized"] = selected_label
+        combined_estimate["message"] = f"Book is estimated to be {positions_away} positions away from joining Main Rising Stars"
     
     # If we have multiple estimates, calculate an average as well
     if len(valid_estimates) > 1:
@@ -543,11 +527,11 @@ def create_combined_estimate(best_estimate, worst_estimate, middle_estimate, mai
             combined_estimate["average_note"] = f"Average of all estimates is position #{combined_estimate['average_position']}"
     
     return combined_estimate
-
+    
 def estimate_distance_to_main_rs(book_id, genre_results, tags, headers):
     """
     Estimate how far the book is from the main Rising Stars list.
-    Modified to handle timeouts better and select the most suitable genres.
+    Modified with minimized delays to avoid worker timeouts.
     """
     # Check cache first
     cache_key = f"distance_estimate_{book_id}"
@@ -587,11 +571,6 @@ def estimate_distance_to_main_rs(book_id, genre_results, tags, headers):
         # Sort genres by the book's position (best to worst)
         sorted_genres = sorted(book_positions.items(), key=lambda x: x[1])
         
-        # Add a human-like delay after initial data gathering
-        human_delay = get_random_delay()
-        logging.info(f"⏳ Human-like delay: waiting {human_delay:.2f} seconds...")
-        time.sleep(human_delay)
-        
         # Find suitable genres for estimation
         suitable_genres = []
         for genre_name, genre_position in sorted_genres:
@@ -625,10 +604,7 @@ def estimate_distance_to_main_rs(book_id, genre_results, tags, headers):
                 else:
                     logging.info(f"⚠️ Genre {genre_name} has only {len(common_books)} common books")
             
-            # Add a human-like delay between checking each genre
-            human_delay = get_random_delay()
-            logging.info(f"⏳ Human-like delay: waiting {human_delay:.2f} seconds...")
-            time.sleep(human_delay)
+            # No delay here - we'll rely on network latency between requests
         
         # If we have no suitable genres, use the original sorting
         if not suitable_genres and sorted_genres:
@@ -667,10 +643,7 @@ def estimate_distance_to_main_rs(book_id, genre_results, tags, headers):
             genre_estimate = process_genre_estimate(genre_name, genre_position, main_rs_books, headers)
             estimates[f"{label}_genre_estimate"] = genre_estimate
             
-            # Add a human-like delay between processing each genre
-            human_delay = get_random_delay()
-            logging.info(f"⏳ Human-like delay: waiting {human_delay:.2f} seconds...")
-            time.sleep(human_delay)
+            # No explicit delay here - rely on network latency
         
         # Create a combined estimate
         combined_estimate = create_combined_estimate(
@@ -691,7 +664,6 @@ def estimate_distance_to_main_rs(book_id, genre_results, tags, headers):
     except Exception as e:
         logging.exception(f"❌ Error estimating distance to main Rising Stars: {str(e)}")
         return {"error": f"Error estimating distance: {str(e)}"}
-
 
 def check_rising_stars(book_id, tags, start_index=0):
     """Checks if the book appears in the main and genre-specific Rising Stars lists."""
