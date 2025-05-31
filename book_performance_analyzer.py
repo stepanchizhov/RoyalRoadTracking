@@ -308,10 +308,13 @@ def search_books(min_pages, max_pages, genres=None, status="ONGOING", order_by="
         logging.error(f"Error searching books: {e}")
         return [], False
 
-def find_similar_books(target_pages, target_genres=None, required_count=50, min_chapters=2):
+def find_similar_books(target_pages, target_genres=None, required_count=None, min_chapters=2):
     """Finds books similar to the target book."""
     books = []
     page_range = 0
+
+    if required_count is None:
+        required_count = 50
     
     max_range_attempts = 100  # Prevent infinite loops
 
