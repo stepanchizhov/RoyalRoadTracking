@@ -30,23 +30,9 @@ USER_AGENTS = [
 BASE_URL = "https://www.royalroad.com"
 SEARCH_URL = f"{BASE_URL}/fictions/search"
 
-def get_dynamic_spread(step):
-    if step == 0:
-        return 0
-    elif step == 1:
-        return 1
-    elif step == 2:
-        return 2
-    elif step == 3:
-        return 5
-    elif step == 4:
-        return 10
-    elif step == 5:
-        return 30
-    elif step == 6:
-        return 50
-    else:
-        return 50 * (step - 5)
+def get_dynamic_spread(step, total_pages):
+    """Returns a spread as a percentage of total pages."""
+    return round(total_pages * 0.01 * step)
 
 def get_scraper():
     """Creates a new cloudscraper instance with random browser settings."""
@@ -317,10 +303,10 @@ def find_similar_books(target_pages, target_genres=None, required_count=None, mi
     max_range_attempts = 100
 
     while len(books) < required_count and page_range <= max_range_attempts:
-        spread = get_dynamic_spread(page_range)
+        spread = get_dynamic_spread(page_range, target_pages)
         min_pages = max(1, target_pages - spread)
         max_pages = target_pages + spread
-        logging.info(f"Trying spread step {page_range} → range: {min_pages}–{max_pages}")
+        logging.info(f"Spread step {page_range} ({spread} pages) → range: {min_pages}–{max_pages}")
 
         page = 1
         has_next = True
