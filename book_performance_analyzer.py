@@ -49,8 +49,8 @@ def extract_book_id(book_url):
     return None
 
 def get_random_delay():
-    """Returns a random delay between 1-3 seconds."""
-    return random.uniform(1.0, 3.0)
+    """Returns a random delay between 0.5-1.5 seconds."""
+    return random.uniform(0.5, 1.5)
 
 def fetch_with_retries(url, headers, max_retries=3, timeout=20):
     """Fetches a URL with retry logic."""
