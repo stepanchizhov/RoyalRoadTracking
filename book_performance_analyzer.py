@@ -294,10 +294,12 @@ def find_similar_books(target_pages, target_genres=None, required_count=20, min_
     """Finds books similar to the target book."""
     books = []
     page_range = 0
+
+    PAGE_SPREAD_STEP = 5  # Try 5 or even 10 depending on your needs
     
     while len(books) < required_count:
-        min_pages = max(1, target_pages - page_range)
-        max_pages = target_pages + page_range
+        min_pages = max(1, target_pages - page_range * PAGE_SPREAD_STEP)
+        max_pages = target_pages + page_range * PAGE_SPREAD_STEP
         
         page = 1
         has_next = True
