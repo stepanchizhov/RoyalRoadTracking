@@ -290,7 +290,7 @@ def search_books(min_pages, max_pages, genres=None, status="ONGOING", order_by="
         logging.error(f"Error searching books: {e}")
         return [], False
 
-def find_similar_books(target_pages, target_genres=None, required_count=100, min_chapters=2):
+def find_similar_books(target_pages, target_genres=None, required_count=20, min_chapters=2):
     """Finds books similar to the target book."""
     books = []
     page_range = 0
@@ -355,7 +355,7 @@ def calculate_percentiles(target_stats, comparison_stats):
             if comparison_values:
                 # Calculate percentile
                 below_count = sum(1 for v in comparison_values if v < target_value)
-                percentile = (below_count / len(comparison_values)) * 100
+                percentile = (below_count / len(comparison_values)) * 20
                 
                 metrics[metric_key] = {
                     'value': target_value,
@@ -377,7 +377,7 @@ def calculate_percentiles(target_stats, comparison_stats):
         
         if comparison_ratios:
             below_count = sum(1 for r in comparison_ratios if r < followers_per_page)
-            percentile = (below_count / len(comparison_ratios)) * 100
+            percentile = (below_count / len(comparison_ratios)) * 20
             
             metrics['followers_per_page'] = {
                 'value': round(followers_per_page, 2),
@@ -393,7 +393,7 @@ def analyze_book():
     start_time = time.time()
     
     book_url = request.args.get('book_url', '').strip()
-    comparison_size = int(request.args.get('comparison_size', 100))
+    comparison_size = int(request.args.get('comparison_size', 20))
     min_chapters = int(request.args.get('min_chapters', 2))
     genres = request.args.getlist('genres')
     
