@@ -42,11 +42,11 @@ def get_dynamic_spread(step):
     elif step == 4:
         return 10
     elif step == 5:
-        return 20
-    elif step == 6:
         return 30
+    elif step == 6:
+        return 50
     else:
-        return 30 + (step - 6) * 10  # 40, 50, 60, etc.
+        return 50 + (step - 6) * 50  # 40, 50, 60, etc.
 
 def get_scraper():
     """Creates a new cloudscraper instance with random browser settings."""
@@ -308,7 +308,7 @@ def search_books(min_pages, max_pages, genres=None, status="ONGOING", order_by="
         logging.error(f"Error searching books: {e}")
         return [], False
 
-def find_similar_books(target_pages, target_genres=None, required_count=20, min_chapters=2):
+def find_similar_books(target_pages, target_genres=None, required_count=50, min_chapters=2):
     """Finds books similar to the target book."""
     books = []
     page_range = 0
