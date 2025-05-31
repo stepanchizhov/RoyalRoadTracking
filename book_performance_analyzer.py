@@ -46,7 +46,7 @@ def get_dynamic_spread(step):
     elif step == 6:
         return 50
     else:
-        return 50 + (step - 6) * 50  # 40, 50, 60, etc.
+        return 50 * (step - 5)
 
 def get_scraper():
     """Creates a new cloudscraper instance with random browser settings."""
