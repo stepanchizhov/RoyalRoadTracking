@@ -312,8 +312,6 @@ def find_similar_books(target_pages, target_genres=None, required_count=50, min_
     """Finds books similar to the target book."""
     books = []
     page_range = 0
-
-    PAGE_SPREAD_STEP = 5  # Try 5 or even 10 depending on your needs
     
     while len(books) < required_count:
         spread = get_dynamic_spread(page_range)
@@ -345,7 +343,7 @@ def find_similar_books(target_pages, target_genres=None, required_count=50, min_
         page_range += 1
         
         # Safety check to prevent infinite loop
-        if page_range > 50:  # Maximum ±50 pages range
+        if page_range > 100:  # Maximum ±100 pages range
             break
     
     return books[:required_count]
