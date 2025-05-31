@@ -309,14 +309,12 @@ def search_books(min_pages, max_pages, genres=None, status="ONGOING", order_by="
         return [], False
 
 def find_similar_books(target_pages, target_genres=None, required_count=None, min_chapters=2):
-    """Finds books similar to the target book."""
+    if required_count is None:
+        required_count = 20
+
     books = []
     page_range = 0
-
-    if required_count is None:
-        required_count = 50
-    
-    max_range_attempts = 100  # Prevent infinite loops
+    max_range_attempts = 100
 
     while len(books) < required_count and page_range <= max_range_attempts:
         spread = get_dynamic_spread(page_range)
@@ -350,9 +348,6 @@ def find_similar_books(target_pages, target_genres=None, required_count=None, mi
     logging.info(f"Found {len(books)} books in total.")
     return books[:required_count]
 
-    
-    return books[:required_count]
-
 def calculate_percentiles(target_stats, comparison_stats):
     """Calculates percentile rankings for the target book."""
     metrics = {}
@@ -380,7 +375,7 @@ def calculate_percentiles(target_stats, comparison_stats):
             if comparison_values:
                 # Calculate percentile
                 below_count = sum(1 for v in comparison_values if v < target_value)
-                percentile = (below_count / len(comparison_values)) * 20
+                percentile = (below_count / len(comparison_values)) * 100
                 
                 metrics[metric_key] = {
                     'value': target_value,
@@ -402,7 +397,7 @@ def calculate_percentiles(target_stats, comparison_stats):
         
         if comparison_ratios:
             below_count = sum(1 for r in comparison_ratios if r < followers_per_page)
-            percentile = (below_count / len(comparison_ratios)) * 20
+            percentile = (below_count / len(comparison_ratios)) * 100
             
             metrics['followers_per_page'] = {
                 'value': round(followers_per_page, 2),
