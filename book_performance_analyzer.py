@@ -313,15 +313,17 @@ def find_similar_books(target_pages, target_genres=None, required_count=50, min_
     books = []
     page_range = 0
     
-    while len(books) < required_count:
+    max_range_attempts = 100  # Prevent infinite loops
+
+    while len(books) < required_count and page_range <= max_range_attempts:
         spread = get_dynamic_spread(page_range)
         min_pages = max(1, target_pages - spread)
         max_pages = target_pages + spread
         logging.info(f"Trying spread step {page_range} → range: {min_pages}–{max_pages}")
-        
+
         page = 1
         has_next = True
-        
+
         while has_next and len(books) < required_count:
             found_books, has_next = search_books(
                 min_pages=min_pages,
@@ -329,22 +331,22 @@ def find_similar_books(target_pages, target_genres=None, required_count=50, min_
                 genres=target_genres,
                 page=page
             )
-            
-            # Filter by minimum chapters
+
             for book in found_books:
                 if book.get('chapters', 0) >= min_chapters:
-                    books.append(book)
-                    if len(books) >= required_count:
-                        break
-            
+                    if book['book_id'] not in {b['book_id'] for b in books}:
+                        books.append(book)
+                        if len(books) >= required_count:
+                            break
+
             page += 1
             time.sleep(get_random_delay())
-        
+
         page_range += 1
-        
-        # Safety check to prevent infinite loop
-        if page_range > 100:  # Maximum ±100 pages range
-            break
+
+    logging.info(f"Found {len(books)} books in total.")
+    return books[:required_count]
+
     
     return books[:required_count]
 
