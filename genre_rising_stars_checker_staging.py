@@ -18,6 +18,11 @@ logging.basicConfig(
 app = Flask(__name__)
 CORS(app, resources={r"/*": {"origins": "*"}})
 
+# Create a cache with TTL (time-to-live) of 30 minutes
+# Max size of 100 entries to prevent memory issues
+cache = cachetools.TTLCache(maxsize=100, ttl=30*60)  # 30 minutes TTL
+cache_lock = threading.RLock()  # Thread-safe lock for cache operations
+
 # User-Agent rotation
 USER_AGENTS = [
     "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/123.0.0.0 Safari/537.36",
