@@ -213,7 +213,7 @@ def get_book_data(book_id):
         logging.error(f"Error fetching book {book_id}: {e}")
         return None
 
-def search_books(min_pages, max_pages, genres=None, status="ONGOING", order_by="followers", page=1):
+def search_books(min_pages, max_pages, genres=None, status="ONGOING", order_by="popularity", page=1):
     """Searches for books with specified criteria."""
     params = {
         'globalFilters': 'false',
@@ -393,19 +393,6 @@ def calculate_percentiles(target_stats, comparison_stats):
     
     return metrics
 
-@app.route('/check_rising_stars')
-def check_rising_stars():
-    book_url = request.args.get('book_url')
-    if not book_url:
-        return jsonify({'error': 'Missing book_url'}), 400
-
-    try:
-        data = analyze_book_for_rising_stars(book_url)
-        return jsonify(data)
-    except Exception as e:
-        print("Error during rising stars analysis:", e)
-        return jsonify({'error': str(e)}), 500
-
 @app.route('/analyze_book', methods=['GET'])
 def analyze_book():
     """Main endpoint for analyzing book performance."""
@@ -567,5 +554,3 @@ if __name__ == '__main__':
     import os
     PORT = int(os.environ.get("PORT", 10000))
     app.run(host="0.0.0.0", port=PORT, debug=True)
-
-
