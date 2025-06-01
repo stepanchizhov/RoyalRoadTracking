@@ -393,6 +393,19 @@ def calculate_percentiles(target_stats, comparison_stats):
     
     return metrics
 
+@app.route('/check_rising_stars')
+def check_rising_stars():
+    book_url = request.args.get('book_url')
+    if not book_url:
+        return jsonify({'error': 'Missing book_url'}), 400
+
+    try:
+        data = analyze_book_for_rising_stars(book_url)
+        return jsonify(data)
+    except Exception as e:
+        print("Error during rising stars analysis:", e)
+        return jsonify({'error': str(e)}), 500
+
 @app.route('/analyze_book', methods=['GET'])
 def analyze_book():
     """Main endpoint for analyzing book performance."""
