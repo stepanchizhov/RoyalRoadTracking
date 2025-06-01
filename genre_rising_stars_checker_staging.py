@@ -1193,7 +1193,7 @@ def get_book_data(book_id):
         logging.error(f"Error fetching book {book_id}: {e}")
         return None
 
-def search_books(min_pages, max_pages, genres=None, status="ONGOING", order_by="popularity", page=1):
+def search_books(min_pages, max_pages, genres=None, status="ONGOING", order_by="followers", page=1):
     """Searches for books with specified criteria."""
     params = {
         'globalFilters': 'false',
