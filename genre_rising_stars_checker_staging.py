@@ -31,6 +31,8 @@ USER_AGENTS = [
 # Base URLs
 BASE_URL = "https://www.royalroad.com"
 SEARCH_URL = f"{BASE_URL}/fictions/search"
+MAIN_RISING_STARS_URL = "https://www.royalroad.com/fictions/rising-stars"
+GENRE_RISING_STARS_URL = "https://www.royalroad.com/fictions/rising-stars?genre="
 
 def get_dynamic_spread(step, total_pages):
     """Returns a spread as a percentage of total pages."""
