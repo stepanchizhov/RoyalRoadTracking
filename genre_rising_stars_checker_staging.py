@@ -41,7 +41,8 @@ def get_scraper():
     browser_options = [
         {'browser': 'firefox', 'platform': 'windows', 'desktop': True},
         {'browser': 'chrome', 'platform': 'windows', 'desktop': True},
-        {'browser': 'chrome', 'platform': 'darwin', 'desktop': True},
+        {'browser': 'chrome', 'platform': 'darwin', 'desktop': True},  # macOS
+        {'browser': 'firefox', 'platform': 'darwin', 'desktop': True},  # macOS
     ]
     
     selected_browser = random.choice(browser_options)
