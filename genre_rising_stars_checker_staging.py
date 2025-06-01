@@ -655,6 +655,62 @@ def estimate_distance_to_main_rs(book_id, genre_results, tags, headers):
         logging.exception(f"❌ Error estimating distance to main Rising Stars: {str(e)}")
         return {"error": f"Error estimating distance: {str(e)}"}
 
+def check_rising_stars(book_id, tags, start_index=0):
+    """Checks if the book appears in the main and genre-specific Rising Stars lists."""
+    results = {}
+    
+    # Check the Main Rising Stars list first
+    try:
+        headers = {"User-Agent": random.choice(USER_AGENTS)}
+        logging.info("🔍 Checking Main Rising Stars list...")
+
+        response = fetch_with_retries(MAIN_RISING_STARS_URL, headers)
+
+        soup = BeautifulSoup(response.text, 'html.parser')
+        book_links = soup.find_all("a", class_="font-red-sunglo")
+        book_ids = [link.get('href', '').split('/')[2] for link in book_links]
+
+        if book_id in book_ids:
+            position = book_ids.index(book_id) + 1
+            results["Main Rising Stars"] = f"✅ Found in position #{position}"
+            logging.info(f"✅ Book {book_id} found in Main Rising Stars at position {position}")
+        else:
+            results["Main Rising Stars"] = "❌ Not found in Main Rising Stars list"
+            logging.info(f"❌ Book {book_id} not found in Main Rising Stars")
+
+    except Exception as e:
+        logging.exception(f"⚠️ Failed to check Main Rising Stars: {str(e)}")
+        results["Main Rising Stars"] = f"⚠️ Failed to check: {str(e)}"
+
+    # Check each genre's Rising Stars page starting from the given index
+    for tag in tags[start_index:]:
+        try:
+            url = f"{GENRE_RISING_STARS_URL}{tag}"
+            logging.info(f"🔍 Checking Rising Stars for genre: {tag}")
+            
+            response = fetch_with_retries(url, headers)
+
+            soup = BeautifulSoup(response.text, 'html.parser')
+            book_links = soup.find_all("a", class_="font-red-sunglo")
+            book_ids = [link.get('href', '').split('/')[2] for link in book_links]
+
+            if book_id in book_ids:
+                position = book_ids.index(book_id) + 1
+                results[tag] = f"✅ Found in position #{position}"
+                logging.info(f"✅ Book {book_id} found in {tag} at position {position}")
+            else:
+                results[tag] = f"❌ Not found in '{tag}' Rising Stars list"
+                logging.info(f"❌ Book {book_id} not found in {tag}")
+
+        except Exception as e:
+            logging.exception(f"⚠️ Failed to check {tag} Rising Stars: {str(e)}")
+            results[tag] = f"⚠️ Failed to check: {str(e)}"
+            
+            # Return partial results and the index of the failed tag
+            return results, tags.index(tag)
+
+    return results, len(tags)
+
 def parse_book_stats(soup):
     """Extracts statistics from a book page."""
     stats = {
@@ -971,65 +1027,199 @@ def calculate_percentiles(target_stats, comparison_stats):
     
     return metrics
 
-@app.route('/check_rising_stars')
-def check_rising_stars(book_id, tags, start_index=0):
-    """Checks if the book appears in the main and genre-specific Rising Stars lists."""
-    results = {}
+@app.route('/check_rising_stars', methods=['GET'])
+def api_rising_stars():
+    start_time = time.time()
+    request_id = f"req_{random.randint(10000, 99999)}"
     
-    # Check the Main Rising Stars list first
+    book_url = request.args.get('book_url', '').strip()
+    estimate_distance_param = request.args.get('estimate_distance', 'false').lower() == 'true'
+    
+    # Logging for debugging
+    logging.critical(f"🔍 [{request_id}] Received book_url: {book_url}")
+    logging.critical(f"🔍 [{request_id}] Estimate distance: {estimate_distance_param}")
+
+    # Validate book URL
+    if not book_url or "royalroad.com" not in book_url:
+        logging.error(f"❌ [{request_id}] Invalid Royal Road URL")
+        return jsonify({
+            "error": "Invalid Royal Road URL", 
+            "results": {}, 
+            "title": "Unknown Title",
+            "request_id": request_id,
+            "processing_time": f"{time.time() - start_time:.2f} seconds"
+        }), 400
+
+    # Get book details
     try:
-        headers = {"User-Agent": random.choice(USER_AGENTS)}
-        logging.info("🔍 Checking Main Rising Stars list...")
+        title, book_id, tags = get_title_and_tags(book_url)
 
-        response = fetch_with_retries(MAIN_RISING_STARS_URL, headers)
-
-        soup = BeautifulSoup(response.text, 'html.parser')
-        book_links = soup.find_all("a", class_="font-red-sunglo")
-        book_ids = [link.get('href', '').split('/')[2] for link in book_links]
-
-        if book_id in book_ids:
-            position = book_ids.index(book_id) + 1
-            results["Main Rising Stars"] = f"✅ Found in position #{position}"
-            logging.info(f"✅ Book {book_id} found in Main Rising Stars at position {position}")
-        else:
-            results["Main Rising Stars"] = "❌ Not found in Main Rising Stars list"
-            logging.info(f"❌ Book {book_id} not found in Main Rising Stars")
-
+        if not book_id or not tags:
+            logging.error(f"❌ [{request_id}] Failed to retrieve book details")
+            return jsonify({
+                "error": "Failed to retrieve book details", 
+                "title": title, 
+                "results": {},
+                "request_id": request_id,
+                "processing_time": f"{time.time() - start_time:.2f} seconds"
+            }), 500
+    
     except Exception as e:
-        logging.exception(f"⚠️ Failed to check Main Rising Stars: {str(e)}")
-        results["Main Rising Stars"] = f"⚠️ Failed to check: {str(e)}"
+        logging.exception(f"❌ [{request_id}] Unexpected error processing book URL: {str(e)}")
+        return jsonify({
+            "error": f"Unexpected error: {str(e)}",
+            "request_id": request_id,
+            "processing_time": f"{time.time() - start_time:.2f} seconds"
+        }), 500
+    
+    # Prepare headers for requests
+    headers = {
+        "User-Agent": random.choice(USER_AGENTS),
+        "Accept": "text/html,application/xhtml+xml,application/xml",
+        "Accept-Language": "en-US,en;q=0.9",
+        "Referer": "https://www.royalroad.com/",
+        "DNT": "1"
+    }
+    
+    # Approach to handle partial results with correct continuation
+    final_results = {}
+    
+    # Check if we have cached results for main rising stars
+    cache_key_main_result = f"main_rs_result_{book_id}"
+    with cache_lock:
+        if cache_key_main_result in cache:
+            final_results["Main Rising Stars"] = cache[cache_key_main_result]
+            logging.info(f"📋 [{request_id}] Cache hit for main rising stars result: {book_id}")
+        else:
+            # Ensure we start with the results from checking the Main Rising Stars
+            try:
+                logging.info(f"🔍 [{request_id}] Checking Main Rising Stars list...")
+                response = fetch_with_retries(MAIN_RISING_STARS_URL, headers, timeout=15)
+                soup = BeautifulSoup(response.text, 'html.parser')
+                
+                book_links = soup.find_all("a", class_="font-red-sunglo")
+                book_ids = []
+                for link in book_links:
+                    try:
+                        link_parts = link.get('href', '').split('/')
+                        if len(link_parts) >= 3:
+                            book_ids.append(link_parts[2])
+                    except Exception as e:
+                        logging.warning(f"⚠️ [{request_id}] Error extracting book ID from link: {e}")
 
-    # Check each genre's Rising Stars page starting from the given index
-    for tag in tags[start_index:]:
+                if book_id in book_ids:
+                    position = book_ids.index(book_id) + 1
+                    main_result = f"✅ Found in position #{position}"
+                    logging.info(f"✅ [{request_id}] Book {book_id} found in Main Rising Stars at position {position}")
+                else:
+                    main_result = "❌ Not found in Main Rising Stars list"
+                    logging.info(f"❌ [{request_id}] Book {book_id} not found in Main Rising Stars")
+                
+                final_results["Main Rising Stars"] = main_result
+                
+                # Cache the result
+                with cache_lock:
+                    cache[cache_key_main_result] = main_result
+            
+            except Exception as e:
+                logging.exception(f"⚠️ [{request_id}] Failed to check Main Rising Stars: {str(e)}")
+                final_results["Main Rising Stars"] = f"⚠️ Failed to check: {str(e)}"
+    
+    # Check for cached genre results
+    genres_processed = []
+    for tag in tags:
+        cache_key_genre = f"genre_result_{book_id}_{tag}"
+        with cache_lock:
+            if cache_key_genre in cache:
+                final_results[tag] = cache[cache_key_genre]
+                genres_processed.append(tag)
+                logging.info(f"📋 [{request_id}] Cache hit for genre result: {tag}")
+    
+    # Process remaining genres
+    remaining_tags = [tag for tag in tags if tag not in genres_processed]
+    for tag in remaining_tags:
         try:
             url = f"{GENRE_RISING_STARS_URL}{tag}"
-            logging.info(f"🔍 Checking Rising Stars for genre: {tag}")
+            logging.info(f"🔍 [{request_id}] Checking Rising Stars for genre: {tag}")
             
-            response = fetch_with_retries(url, headers)
-
+            response = fetch_with_retries(url, headers, timeout=15)
             soup = BeautifulSoup(response.text, 'html.parser')
+            
             book_links = soup.find_all("a", class_="font-red-sunglo")
             book_ids = [link.get('href', '').split('/')[2] for link in book_links]
 
             if book_id in book_ids:
                 position = book_ids.index(book_id) + 1
-                results[tag] = f"✅ Found in position #{position}"
-                logging.info(f"✅ Book {book_id} found in {tag} at position {position}")
+                result = f"✅ Found in position #{position}"
+                logging.info(f"✅ [{request_id}] Book {book_id} found in {tag} at position {position}")
             else:
-                results[tag] = f"❌ Not found in '{tag}' Rising Stars list"
-                logging.info(f"❌ Book {book_id} not found in {tag}")
+                result = f"❌ Not found in '{tag}' Rising Stars list"
+                logging.info(f"❌ [{request_id}] Book {book_id} not found in {tag}")
+            
+            final_results[tag] = result
+            
+            # Cache the result
+            with cache_lock:
+                cache[f"genre_result_{book_id}_{tag}"] = result
 
         except Exception as e:
-            logging.exception(f"⚠️ Failed to check {tag} Rising Stars: {str(e)}")
-            results[tag] = f"⚠️ Failed to check: {str(e)}"
-            
-            # Return partial results and the index of the failed tag
-            return results, tags.index(tag)
-
-    return results, len(tags)
-    except Exception as e:
-        print("Error during rising stars analysis:", e)
-        return jsonify({'error': str(e)}), 500
+            logging.exception(f"⚠️ [{request_id}] Failed to check {tag} Rising Stars: {str(e)}")
+            final_results[tag] = f"⚠️ Failed to check: {str(e)}"
+    
+    # Check if the book is already on the main Rising Stars list
+    already_on_main_rs = False
+    main_rs_position = None
+    
+    if "Main Rising Stars" in final_results and "✅ Found in position #" in final_results["Main Rising Stars"]:
+        already_on_main_rs = True
+        position_match = re.search(r"#(\d+)", final_results["Main Rising Stars"])
+        if position_match:
+            main_rs_position = int(position_match.group(1))
+    
+    # Distance estimation logic with improved error handling
+    distance_estimate = {}
+    if estimate_distance_param:
+        if already_on_main_rs:
+            # Joking message when already on main list
+            distance_estimate = {
+                "message": f"Hey! Why are you wasting precious energy? Your book is already on the main Rising Stars list at position #{main_rs_position}! 🎉",
+                "already_on_main": True,
+                "main_position": main_rs_position
+            }
+            logging.info(f"🎯 [{request_id}] Book already on main Rising Stars at position #{main_rs_position}")
+        else:
+            try:
+                cache_key_distance = f"distance_estimate_{book_id}"
+                with cache_lock:
+                    if cache_key_distance in cache:
+                        distance_estimate = cache[cache_key_distance]
+                        logging.info(f"📋 [{request_id}] Cache hit for distance estimate: {book_id}")
+                    else:
+                        distance_estimate = estimate_distance_to_main_rs(book_id, final_results, tags, headers)
+                        # If it's not an error and not "insufficient_data", cache it
+                        if "error" not in distance_estimate and "insufficient_data" not in distance_estimate:
+                            with cache_lock:
+                                cache[cache_key_distance] = distance_estimate
+            except Exception as e:
+                logging.critical(f"❌ [{request_id}] CRITICAL ERROR during distance estimation: {str(e)}")
+                distance_estimate = {"error": f"Error during estimation: {str(e)}"}
+    
+    # Build response
+    response_data = {
+        "title": title, 
+        "results": final_results,
+        "book_id": book_id,
+        "tags": tags,
+        "request_id": request_id,
+        "processing_time": f"{time.time() - start_time:.2f} seconds"
+    }
+    
+    # Add distance estimate if it was requested and generated
+    if estimate_distance_param and distance_estimate:
+        response_data["distance_estimate"] = distance_estimate
+        logging.critical(f"✅ [{request_id}] Distance estimate ADDED to response")
+    
+    return jsonify(response_data)
 
 @app.route('/analyze_book', methods=['GET'])
 def analyze_book():
