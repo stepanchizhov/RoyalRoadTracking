@@ -1378,9 +1378,38 @@ def health_check():
         'time': datetime.now().isoformat()
     })
 
+# Function to periodically clean up cache (optional, for long-running servers)
+def cache_cleanup():
+    """Clean up expired cache entries to free memory."""
+    while True:
+        time.sleep(3600)  # Run every hour
+        try:
+            with cache_lock:
+                # Note: TTLCache automatically removes expired entries on access,
+                # but this forces a cleanup even without access
+                old_size = len(cache)
+                for key in list(cache.keys()):
+                    # Just accessing each key will trigger TTLCache's cleanup mechanism
+                    _ = cache.get(key)
+                current_size = len(cache)
+                
+                if old_size > current_size:
+                    logging.info(f"🧹 Cache cleanup: removed {old_size - current_size} expired entries")
+        except Exception as e:
+            logging.error(f"❌ Error during cache cleanup: {e}")
+
 if __name__ == '__main__':
     import os
+    
+    # Start cache cleanup in a background thread
+    cleanup_thread = threading.Thread(target=cache_cleanup, daemon=True)
+    cleanup_thread.start()
+    
+    # Get port from environment variable, default to 10000
     PORT = int(os.environ.get("PORT", 10000))
+    
+    # Start the Flask app
+    logging.info(f"🚀 Starting server on port {PORT}")
     app.run(host="0.0.0.0", port=PORT, debug=True)
 
 
