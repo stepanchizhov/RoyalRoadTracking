@@ -1,4 +1,4 @@
-from flask import Flask, request, jsonify
+from flask import Flask, request, jsonify, Response, stream_with_context
 from flask_cors import CORS
 import cloudscraper
 from bs4 import BeautifulSoup
@@ -1384,6 +1384,16 @@ def health_check():
         'time': datetime.now().isoformat()
     })
 
+@app.route('/progress_stream')
+def progress_stream():
+    def generate():
+        for i in range(1, 101):
+            yield f"data: Processing book {i}/100\n\n"
+            time.sleep(0.1)  # Simulate delay
+        yield "data: done\n\n"
+    
+    return Response(stream_with_context(generate()), mimetype='text/event-stream')
+
 # Function to periodically clean up cache (optional, for long-running servers)
 def cache_cleanup():
     """Clean up expired cache entries to free memory."""
@@ -1417,5 +1427,3 @@ if __name__ == '__main__':
     # Start the Flask app
     logging.info(f"🚀 Starting server on port {PORT}")
     app.run(host="0.0.0.0", port=PORT, debug=True)
-
-
