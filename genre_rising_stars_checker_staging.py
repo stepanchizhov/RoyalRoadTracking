@@ -1417,19 +1417,27 @@ def progress_stream():
 
 @app.route("/stream_analyze_book")
 def stream_analyze_book():
-    book_url = request.args.get("book_url")
-    comparison_size = int(request.args.get("comparison_size", 20))
-    min_chapters = int(request.args.get("min_chapters", 5))
-    genres = request.args.getlist("genres")
-
-    def event_stream():
-        try:
-            for update in analyze_book_streaming(book_url, comparison_size, min_chapters, genres):
-                yield f"data: {update}\n\n"
-        except Exception as e:
-            yield f"data: ERROR: {str(e)}\n\n"
-
-    return Response(stream_with_context(event_stream()), mimetype='text/event-stream')
+    def generate():
+        yield "data: Connecting...\n\n"
+        for i in range(1, 101):
+            yield f"data: Processing book {i}/100\n\n"
+            time.sleep(0.1)
+        yield "data: done\n\n"
+    return Response(stream_with_context(generate()), mimetype='text/event-stream')
+#def stream_analyze_book():
+#    book_url = request.args.get("book_url")
+#    comparison_size = int(request.args.get("comparison_size", 20))
+#    min_chapters = int(request.args.get("min_chapters", 5))
+#    genres = request.args.getlist("genres")
+#
+#    def event_stream():
+#        try:
+#            for update in analyze_book_streaming(book_url, comparison_size, min_chapters, genres):
+#                yield f"data: {update}\n\n"
+#        except Exception as e:
+#            yield f"data: ERROR: {str(e)}\n\n"
+#
+#    return Response(stream_with_context(event_stream()), mimetype='text/event-stream')
 
 
 # Function to periodically clean up cache (optional, for long-running servers)
