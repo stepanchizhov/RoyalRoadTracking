@@ -1033,6 +1033,27 @@ def calculate_percentiles(target_stats, comparison_stats):
     
     return metrics
 
+def analyze_book_for_rising_stars_streaming(book_url):
+    # Step 1
+    yield "Fetching book data..."
+    book_data = fetch_book_data(book_url)
+
+    # Step 2
+    yield "Finding similar books..."
+    similar_books = find_similar_books(book_data)
+
+    # Step 3
+    total = len(similar_books)
+    for i, book in enumerate(similar_books):
+        # Do something...
+        yield f"Processing book {i + 1}/{total}"
+
+    # Final
+    yield "Calculating performance metrics..."
+    result = calculate_performance(book_data, similar_books)
+
+    yield f"RESULT: {json.dumps(result)}"
+
 @app.route('/check_rising_stars', methods=['GET'])
 def api_rising_stars():
     start_time = time.time()
@@ -1393,6 +1414,23 @@ def progress_stream():
         yield "data: done\n\n"
     
     return Response(stream_with_context(generate()), mimetype='text/event-stream')
+
+@app.route("/stream_analyze_book")
+def stream_analyze_book():
+    book_url = request.args.get("book_url")
+    comparison_size = int(request.args.get("comparison_size", 20))
+    min_chapters = int(request.args.get("min_chapters", 5))
+    genres = request.args.getlist("genres")
+
+    def event_stream():
+        try:
+            for update in analyze_book_streaming(book_url, comparison_size, min_chapters, genres):
+                yield f"data: {update}\n\n"
+        except Exception as e:
+            yield f"data: ERROR: {str(e)}\n\n"
+
+    return Response(stream_with_context(event_stream()), mimetype='text/event-stream')
+
 
 # Function to periodically clean up cache (optional, for long-running servers)
 def cache_cleanup():
