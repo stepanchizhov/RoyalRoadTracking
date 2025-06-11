@@ -718,7 +718,7 @@ def check_rising_stars(book_id, tags, start_index=0):
     return results, len(tags)
 
 def parse_book_stats(soup):
-    """Extracts statistics from a book page."""
+    """Extracts statistics from a book page with enhanced data collection."""
     stats = {
         'followers': 0,
         'favorites': 0,
@@ -730,7 +730,17 @@ def parse_book_stats(soup):
         'chapters': 0,
         'title': 'Unknown',
         'author': 'Unknown',
-        'genres': []
+        'genres': [],
+        'comments': 0,  # NEW
+        'review_count': 0,  # NEW
+        'status': 'ongoing',  # NEW
+        'word_count': 0,  # NEW
+        'last_chapter_date': None,  # NEW
+        'warning_tags': [],  # NEW
+        'style_score': None,  # NEW
+        'story_score': None,  # NEW
+        'grammar_score': None,  # NEW
+        'character_score': None  # NEW
     }
     
     # Extract title
@@ -751,6 +761,19 @@ def parse_book_stats(soup):
         tag_text = tag.text.strip()
         if tag_text:
             stats['genres'].append(tag_text)
+    
+    # Extract book status (ongoing, completed, hiatus, etc.)
+    status_tag = soup.find("span", class_="label-wrap")
+    if status_tag:
+        status_text = status_tag.text.strip().upper()
+        if "COMPLETED" in status_text:
+            stats['status'] = 'completed'
+        elif "HIATUS" in status_text:
+            stats['status'] = 'hiatus'
+        elif "DROPPED" in status_text or "STUB" in status_text:
+            stats['status'] = 'dropped'
+        else:
+            stats['status'] = 'ongoing'
     
     # Extract statistics
     stats_section = soup.find("div", class_="fiction-stats")
@@ -812,6 +835,33 @@ def parse_book_stats(soup):
                         stats['pages'] = int(pages_text)
                     except:
                         pass
+                        
+            elif "Comments :" in text:
+                next_li = li.find_next_sibling("li")
+                if next_li:
+                    comments_text = next_li.text.strip().replace(",", "")
+                    try:
+                        stats['comments'] = int(comments_text)
+                    except:
+                        pass
+                        
+            elif "Reviews :" in text:
+                next_li = li.find_next_sibling("li")
+                if next_li:
+                    reviews_text = next_li.text.strip().replace(",", "")
+                    try:
+                        stats['review_count'] = int(reviews_text)
+                    except:
+                        pass
+                        
+            elif "Words :" in text:
+                next_li = li.find_next_sibling("li")
+                if next_li:
+                    words_text = next_li.text.strip().replace(",", "")
+                    try:
+                        stats['word_count'] = int(words_text)
+                    except:
+                        pass
     
     # Extract rating score
     overall_score = soup.find("li", string=re.compile("Overall Score"))
@@ -824,12 +874,63 @@ def parse_book_stats(soup):
                 if match:
                     stats['rating_score'] = float(match.group(1))
     
-    # Count chapters
+    # Extract individual rating scores
+    rating_container = soup.find("div", class_="rating-container")
+    if rating_container:
+        score_items = rating_container.find_all("div", class_="rating-item")
+        for item in score_items:
+            label = item.find("span", class_="rating-label")
+            value = item.find("span", class_="star")
+            if label and value and value.get("data-content"):
+                score_type = label.text.strip().lower()
+                score_match = re.search(r'([\d.]+)', value.get("data-content"))
+                if score_match:
+                    score_val = float(score_match.group(1))
+                    if "style" in score_type:
+                        stats['style_score'] = score_val
+                    elif "story" in score_type:
+                        stats['story_score'] = score_val
+                    elif "grammar" in score_type:
+                        stats['grammar_score'] = score_val
+                    elif "character" in score_type:
+                        stats['character_score'] = score_val
+    
+    # Extract comments count from comments section
+    comments_section = soup.find("h2", string=re.compile("Comments"))
+    if comments_section:
+        match = re.search(r'\((\d+)\)', comments_section.text)
+        if match:
+            stats['comments'] = int(match.group(1))
+    
+    # Extract review count from reviews section
+    reviews_section = soup.find("h2", string=re.compile("Reviews"))
+    if reviews_section:
+        match = re.search(r'\((\d+)\)', reviews_section.text)
+        if match:
+            stats['review_count'] = int(match.group(1))
+    
+    # Extract last chapter date
     chapters_table = soup.find("table", id="chapters")
     if chapters_table:
         tbody = chapters_table.find("tbody")
         if tbody:
-            stats['chapters'] = len(tbody.find_all("tr"))
+            chapters = tbody.find_all("tr")
+            stats['chapters'] = len(chapters)
+            
+            # Get last chapter date
+            if chapters:
+                last_chapter = chapters[0]  # First row is usually the latest
+                time_elem = last_chapter.find("time")
+                if time_elem and time_elem.get("datetime"):
+                    stats['last_chapter_date'] = time_elem.get("datetime")
+    
+    # Extract warning tags
+    warning_tags = []
+    warning_elements = soup.find_all("span", class_="label-warning")
+    for warning in warning_elements:
+        warning_tags.append(warning.text.strip())
+    if warning_tags:
+        stats['warning_tags'] = warning_tags
     
     return stats
 
@@ -1087,6 +1188,12 @@ def api_rising_stars():
         "DNT": "1"
     }
     
+    # Initialize to store discovered books
+    discovered_books = {
+        'main_rising_stars': [],
+        'genre_rising_stars': {}
+    }
+    
     # Approach to handle partial results with correct continuation
     final_results = {}
     
@@ -1100,19 +1207,13 @@ def api_rising_stars():
             # Ensure we start with the results from checking the Main Rising Stars
             try:
                 logging.info(f"🔍 [{request_id}] Checking Main Rising Stars list...")
-                response = fetch_with_retries(MAIN_RISING_STARS_URL, headers, timeout=15)
-                soup = BeautifulSoup(response.text, 'html.parser')
                 
-                book_links = soup.find_all("a", class_="font-red-sunglo")
-                book_ids = []
-                for link in book_links:
-                    try:
-                        link_parts = link.get('href', '').split('/')
-                        if len(link_parts) >= 3:
-                            book_ids.append(link_parts[2])
-                    except Exception as e:
-                        logging.warning(f"⚠️ [{request_id}] Error extracting book ID from link: {e}")
-
+                # Get detailed book data from main RS
+                main_books = get_book_details_from_main_rs(headers)
+                discovered_books['main_rising_stars'] = main_books
+                
+                # Check if our book is in the list
+                book_ids = [book['book_id'] for book in main_books]
                 if book_id in book_ids:
                     position = book_ids.index(book_id) + 1
                     main_result = f"✅ Found in position #{position}"
@@ -1145,15 +1246,12 @@ def api_rising_stars():
     remaining_tags = [tag for tag in tags if tag not in genres_processed]
     for tag in remaining_tags:
         try:
-            url = f"{GENRE_RISING_STARS_URL}{tag}"
-            logging.info(f"🔍 [{request_id}] Checking Rising Stars for genre: {tag}")
+            # Get all books in this genre's rising stars
+            genre_books = get_books_for_genre(tag, headers)
+            discovered_books['genre_rising_stars'][tag] = genre_books
             
-            response = fetch_with_retries(url, headers, timeout=15)
-            soup = BeautifulSoup(response.text, 'html.parser')
-            
-            book_links = soup.find_all("a", class_="font-red-sunglo")
-            book_ids = [link.get('href', '').split('/')[2] for link in book_links]
-
+            # Check if our book is in the list
+            book_ids = [book['book_id'] for book in genre_books]
             if book_id in book_ids:
                 position = book_ids.index(book_id) + 1
                 result = f"✅ Found in position #{position}"
@@ -1210,14 +1308,15 @@ def api_rising_stars():
                 logging.critical(f"❌ [{request_id}] CRITICAL ERROR during distance estimation: {str(e)}")
                 distance_estimate = {"error": f"Error during estimation: {str(e)}"}
     
-    # Build response
+    # Build response with discovered books
     response_data = {
         "title": title, 
         "results": final_results,
         "book_id": book_id,
         "tags": tags,
         "request_id": request_id,
-        "processing_time": f"{time.time() - start_time:.2f} seconds"
+        "processing_time": f"{time.time() - start_time:.2f} seconds",
+        "discovered_books": discovered_books  # NEW: Include discovered books
     }
     
     # Add distance estimate if it was requested and generated
@@ -1313,7 +1412,7 @@ def analyze_book():
                 'Dungeon': 'dungeon',
                 'Sports': 'sports',
                 'Technologically Engineered': 'technologically_engineered',
-                'Genetically Engineered': 'genetically_engineered ',
+                'Genetically Engineered': 'genetically_engineered',
                 'Super Heroes': 'super_heroes',
                 'Multiple Lead Characters': 'multiple_lead',
                 'Strategy': 'strategy',
@@ -1355,7 +1454,7 @@ def analyze_book():
         # Calculate metrics
         metrics = calculate_percentiles(target_book, comparison_data)
         
-        # Prepare response
+        # Prepare response with comparison books included
         response_data = {
             'target_book': target_book,
             'metrics': metrics,
@@ -1365,7 +1464,8 @@ def analyze_book():
                 'min_chapters': min_chapters,
                 'pages': target_book['pages']
             },
-            'processing_time': f"{time.time() - start_time:.2f} seconds"
+            'processing_time': f"{time.time() - start_time:.2f} seconds",
+            'comparison_books': comparison_data  # NEW: Include all comparison books
         }
         
         return jsonify(response_data)
@@ -1427,4 +1527,3 @@ if __name__ == '__main__':
     # Start the Flask app
     logging.info(f"🚀 Starting server on port {PORT}")
     app.run(host="0.0.0.0", port=PORT, debug=True)
-
