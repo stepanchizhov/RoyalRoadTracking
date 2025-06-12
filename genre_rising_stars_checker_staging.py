@@ -731,16 +731,16 @@ def parse_book_stats(soup):
         'title': 'Unknown',
         'author': 'Unknown',
         'genres': [],
-        'comments': 0,  # NEW
-        'review_count': 0,  # NEW
-        'status': 'ongoing',  # NEW
-        'word_count': 0,  # NEW
-        'last_chapter_date': None,  # NEW
-        'warning_tags': [],  # NEW
-        'style_score': None,  # NEW
-        'story_score': None,  # NEW
-        'grammar_score': None,  # NEW
-        'character_score': None  # NEW
+        'comments': 0,
+        'review_count': 0,
+        'status': 'ongoing',
+        'word_count': 0,
+        'last_chapter_date': None,
+        'warning_tags': [],
+        'style_score': None,
+        'story_score': None,
+        'grammar_score': None,
+        'character_score': None
     }
     
     # Extract title
@@ -775,68 +775,135 @@ def parse_book_stats(soup):
         else:
             stats['status'] = 'ongoing'
     
-    # Extract statistics
+    # Extract statistics - Updated logic for the stats-content div structure
+    stats_content = soup.find("div", class_="stats-content")
+    if stats_content:
+        # Process both columns
+        stat_items = stats_content.find_all("li")
+        
+        i = 0
+        while i < len(stat_items):
+            item = stat_items[i]
+            text = item.text.strip()
+            
+            # Check for score items (they have specific patterns)
+            if "Overall Score" in text and i + 1 < len(stat_items):
+                next_item = stat_items[i + 1]
+                score_span = next_item.find("span", class_="star")
+                if score_span and score_span.get("data-content"):
+                    match = re.search(r'([\d.]+)\s*/\s*5', score_span.get("data-content"))
+                    if match:
+                        stats['rating_score'] = float(match.group(1))
+                i += 2
+                continue
+                
+            elif "Style Score" in text and i + 1 < len(stat_items):
+                next_item = stat_items[i + 1]
+                score_span = next_item.find("span", class_="star")
+                if score_span and score_span.get("data-content"):
+                    match = re.search(r'([\d.]+)\s*/\s*5', score_span.get("data-content"))
+                    if match:
+                        stats['style_score'] = float(match.group(1))
+                i += 2
+                continue
+                
+            elif "Story Score" in text and i + 1 < len(stat_items):
+                next_item = stat_items[i + 1]
+                score_span = next_item.find("span", class_="star")
+                if score_span and score_span.get("data-content"):
+                    match = re.search(r'([\d.]+)\s*/\s*5', score_span.get("data-content"))
+                    if match:
+                        stats['story_score'] = float(match.group(1))
+                i += 2
+                continue
+                
+            elif "Grammar Score" in text and i + 1 < len(stat_items):
+                next_item = stat_items[i + 1]
+                score_span = next_item.find("span", class_="star")
+                if score_span and score_span.get("data-content"):
+                    match = re.search(r'([\d.]+)\s*/\s*5', score_span.get("data-content"))
+                    if match:
+                        stats['grammar_score'] = float(match.group(1))
+                i += 2
+                continue
+                
+            elif "Character Score" in text and i + 1 < len(stat_items):
+                next_item = stat_items[i + 1]
+                score_span = next_item.find("span", class_="star")
+                if score_span and score_span.get("data-content"):
+                    match = re.search(r'([\d.]+)\s*/\s*5', score_span.get("data-content"))
+                    if match:
+                        stats['character_score'] = float(match.group(1))
+                i += 2
+                continue
+                
+            # Check for other stats (they follow pattern: label in one li, value in next li)
+            elif "Total Views :" in text and i + 1 < len(stat_items):
+                views_text = stat_items[i + 1].text.strip().replace(",", "")
+                try:
+                    stats['views'] = int(views_text)
+                except:
+                    pass
+                i += 2
+                continue
+                
+            elif "Average Views :" in text and i + 1 < len(stat_items):
+                avg_views_text = stat_items[i + 1].text.strip().replace(",", "")
+                try:
+                    stats['avg_views'] = int(avg_views_text)
+                except:
+                    pass
+                i += 2
+                continue
+                
+            elif "Followers :" in text and i + 1 < len(stat_items):
+                followers_text = stat_items[i + 1].text.strip().replace(",", "")
+                try:
+                    stats['followers'] = int(followers_text)
+                except:
+                    pass
+                i += 2
+                continue
+                
+            elif "Favorites :" in text and i + 1 < len(stat_items):
+                favorites_text = stat_items[i + 1].text.strip().replace(",", "")
+                try:
+                    stats['favorites'] = int(favorites_text)
+                except:
+                    pass
+                i += 2
+                continue
+                
+            elif "Ratings :" in text and i + 1 < len(stat_items):
+                ratings_text = stat_items[i + 1].text.strip().replace(",", "")
+                try:
+                    stats['ratings'] = int(ratings_text)
+                except:
+                    pass
+                i += 2
+                continue
+                
+            elif "Pages" in text and i + 1 < len(stat_items):
+                pages_text = stat_items[i + 1].text.strip().replace(",", "")
+                try:
+                    stats['pages'] = int(pages_text)
+                    # Calculate word count as pages * 275
+                    stats['word_count'] = stats['pages'] * 275
+                except:
+                    pass
+                i += 2
+                continue
+                
+            else:
+                i += 1
+    
+    # Also check the old fiction-stats div for any missing data
     stats_section = soup.find("div", class_="fiction-stats")
     if stats_section:
-        # Look for specific stats
         for li in stats_section.find_all("li"):
             text = li.text.strip()
             
-            if "Followers :" in text:
-                next_li = li.find_next_sibling("li")
-                if next_li:
-                    followers_text = next_li.text.strip().replace(",", "")
-                    try:
-                        stats['followers'] = int(followers_text)
-                    except:
-                        pass
-                        
-            elif "Favorites :" in text:
-                next_li = li.find_next_sibling("li")
-                if next_li:
-                    favorites_text = next_li.text.strip().replace(",", "")
-                    try:
-                        stats['favorites'] = int(favorites_text)
-                    except:
-                        pass
-                        
-            elif "Total Views :" in text:
-                next_li = li.find_next_sibling("li")
-                if next_li:
-                    views_text = next_li.text.strip().replace(",", "")
-                    try:
-                        stats['views'] = int(views_text)
-                    except:
-                        pass
-                        
-            elif "Average Views :" in text:
-                next_li = li.find_next_sibling("li")
-                if next_li:
-                    avg_views_text = next_li.text.strip().replace(",", "")
-                    try:
-                        stats['avg_views'] = int(avg_views_text)
-                    except:
-                        pass
-                        
-            elif "Ratings :" in text:
-                next_li = li.find_next_sibling("li")
-                if next_li:
-                    ratings_text = next_li.text.strip().replace(",", "")
-                    try:
-                        stats['ratings'] = int(ratings_text)
-                    except:
-                        pass
-                        
-            elif "Pages" in text:
-                next_li = li.find_next_sibling("li")
-                if next_li:
-                    pages_text = next_li.text.strip().replace(",", "")
-                    try:
-                        stats['pages'] = int(pages_text)
-                    except:
-                        pass
-                        
-            elif "Comments :" in text:
+            if "Comments :" in text:
                 next_li = li.find_next_sibling("li")
                 if next_li:
                     comments_text = next_li.text.strip().replace(",", "")
@@ -859,41 +926,10 @@ def parse_book_stats(soup):
                 if next_li:
                     words_text = next_li.text.strip().replace(",", "")
                     try:
+                        # If we got word count from here, use it instead of calculated
                         stats['word_count'] = int(words_text)
                     except:
                         pass
-    
-    # Extract rating score
-    overall_score = soup.find("li", string=re.compile("Overall Score"))
-    if overall_score:
-        score_element = overall_score.find_next_sibling("li")
-        if score_element:
-            star_element = score_element.find("span", class_="star")
-            if star_element and star_element.get("data-content"):
-                match = re.search(r'([\d.]+)\s*/\s*5', star_element.get("data-content"))
-                if match:
-                    stats['rating_score'] = float(match.group(1))
-    
-    # Extract individual rating scores
-    rating_container = soup.find("div", class_="rating-container")
-    if rating_container:
-        score_items = rating_container.find_all("div", class_="rating-item")
-        for item in score_items:
-            label = item.find("span", class_="rating-label")
-            value = item.find("span", class_="star")
-            if label and value and value.get("data-content"):
-                score_type = label.text.strip().lower()
-                score_match = re.search(r'([\d.]+)', value.get("data-content"))
-                if score_match:
-                    score_val = float(score_match.group(1))
-                    if "style" in score_type:
-                        stats['style_score'] = score_val
-                    elif "story" in score_type:
-                        stats['story_score'] = score_val
-                    elif "grammar" in score_type:
-                        stats['grammar_score'] = score_val
-                    elif "character" in score_type:
-                        stats['character_score'] = score_val
     
     # Extract comments count from comments section
     comments_section = soup.find("h2", string=re.compile("Comments"))
