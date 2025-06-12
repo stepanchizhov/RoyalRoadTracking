@@ -190,7 +190,7 @@ def get_title_and_tags(book_url, book_id=None):
 
 
 def get_book_details_from_main_rs(headers):
-    """Get details of books on the main Rising Stars list including their IDs and tags."""
+    """Get details of books on the main Rising Stars list including comprehensive data."""
     try:
         logging.info("🔍 Fetching main Rising Stars list for detailed book analysis...")
         response = fetch_with_retries(MAIN_RISING_STARS_URL, headers)
@@ -203,43 +203,16 @@ def get_book_details_from_main_rs(headers):
         for i, entry in enumerate(book_entries):
             position = i + 1
             
-            # Extract book ID from the link
-            title_link = entry.find("a", class_="font-red-sunglo")
-            if not title_link:
-                continue
+            # Use the comprehensive parser
+            book_data = parse_rising_stars_book_data(entry)
+            if book_data and book_data.get('book_id'):
+                book_data['position'] = position
+                main_rs_books.append(book_data)
                 
-            book_id = title_link["href"].split("/")[2]
-            
-            # Extract book title
-            title = title_link.text.strip()
-            
-            # Find tags using new method
-            tags_span = entry.find("span", class_="tags")
-            tags = []
-            if tags_span:
-                tag_links = tags_span.find_all("a", class_="fiction-tag")
-                for tag_link in tag_links:
-                    # Extract tag from the href attribute
-                    tag = tag_link.get('href', '').split('tagsAdd=')[-1]
-                    if tag and tag not in tags:
-                        tags.append(tag)
-            
-            # If no tags found, try fallback method
-            if not tags:
-                tag_links = entry.find_all("a", class_="label")
-                for tag_link in tag_links:
-                    tag = tag_link.get('href', '').split('tagsAdd=')[-1]
-                    if tag and tag not in tags:
-                        tags.append(tag)
-            
-            main_rs_books.append({
-                "position": position,
-                "book_id": book_id,
-                "title": title,
-                "tags": tags
-            })
-            
-            logging.info(f"📊 Main RS #{position}: {title} (ID: {book_id}) - Tags: {tags}")
+                logging.info(f"📊 Main RS #{position}: {book_data.get('title', 'Unknown')} "
+                           f"(ID: {book_data['book_id']}) - "
+                           f"Followers: {book_data.get('followers', 'N/A')}, "
+                           f"Views: {book_data.get('total_views', 'N/A')}")
         
         return main_rs_books
     
@@ -249,7 +222,7 @@ def get_book_details_from_main_rs(headers):
 
 
 def get_books_for_genre(genre, headers):
-    """Get all books from a genre-specific Rising Stars list with caching."""
+    """Get all books from a genre-specific Rising Stars list with comprehensive data."""
     # Check cache first
     cache_key = f"genre_books_{genre}"
     with cache_lock:
@@ -261,7 +234,7 @@ def get_books_for_genre(genre, headers):
         url = f"{GENRE_RISING_STARS_URL}{genre}"
         logging.info(f"🔍 Fetching Rising Stars for genre: {genre} for detailed analysis...")
         
-        response = fetch_with_retries(url, headers, timeout=15)  # Reduced timeout
+        response = fetch_with_retries(url, headers, timeout=15)
         soup = BeautifulSoup(response.text, "html.parser")
         
         # Get all book entries
@@ -271,23 +244,15 @@ def get_books_for_genre(genre, headers):
         for i, entry in enumerate(book_entries):
             position = i + 1
             
-            # Extract book ID from the link
-            title_link = entry.find("a", class_="font-red-sunglo")
-            if not title_link:
-                continue
+            # Use the comprehensive parser
+            book_data = parse_rising_stars_book_data(entry)
+            if book_data and book_data.get('book_id'):
+                book_data['position'] = position
+                genre_books.append(book_data)
                 
-            book_id = title_link["href"].split("/")[2]
-            
-            # Extract book title
-            title = title_link.text.strip()
-            
-            genre_books.append({
-                "position": position,
-                "book_id": book_id,
-                "title": title
-            })
-            
-            logging.info(f"📚 {genre} RS #{position}: {title} (ID: {book_id})")
+                logging.info(f"📚 {genre} RS #{position}: {book_data.get('title', 'Unknown')} "
+                           f"(ID: {book_data['book_id']}) - "
+                           f"Followers: {book_data.get('followers', 'N/A')}")
         
         # Cache the results
         with cache_lock:
@@ -716,6 +681,113 @@ def check_rising_stars(book_id, tags, start_index=0):
             return results, tags.index(tag)
 
     return results, len(tags)
+
+def parse_rising_stars_book_data(book_element):
+    """
+    Extract comprehensive book data from a Rising Stars list item element
+    """
+    book_data = {}
+    
+    try:
+        # Extract book ID and URL
+        title_link = book_element.find("a", class_="font-red-sunglo")
+        if not title_link:
+            return None
+            
+        book_url = title_link.get('href', '')
+        book_id = extract_book_id(book_url)
+        if book_id:
+            book_data['book_id'] = book_id
+            book_data['url'] = f"https://www.royalroad.com{book_url}" if book_url.startswith('/') else book_url
+        
+        # Extract title
+        book_data['title'] = title_link.text.strip()
+        
+        # Extract author - need to look for it in the item
+        # Author might be in a subtitle or separate element
+        author_elem = book_element.find("span", class_="author") or book_element.find("a", href=re.compile(r"/user/"))
+        if author_elem:
+            book_data['author'] = author_elem.text.strip()
+        
+        # Extract tags/genres
+        tags = []
+        tags_span = book_element.find("span", class_="tags")
+        if tags_span:
+            tag_links = tags_span.find_all("a", class_="fiction-tag")
+            for tag_link in tag_links:
+                tag_text = tag_link.text.strip()
+                if tag_text:
+                    tags.append(tag_text)
+        book_data['tags'] = tags
+        
+        # Extract status (ONGOING, COMPLETED, etc.)
+        status_labels = book_element.find_all("span", class_="label")
+        for label in status_labels:
+            label_text = label.text.strip().upper()
+            if label_text in ["ONGOING", "COMPLETED", "HIATUS", "DROPPED", "STUB"]:
+                book_data['status'] = label_text.lower()
+                break
+        else:
+            book_data['status'] = 'ongoing'  # default
+        
+        # Extract stats from the stats section
+        stats_div = book_element.find("div", class_="stats")
+        if stats_div:
+            # All stat items are in col-sm-6 divs
+            stat_items = stats_div.find_all("div", class_="col-sm-6")
+            
+            for item in stat_items:
+                text = item.text.strip()
+                
+                # Followers
+                if "Followers" in text:
+                    match = re.search(r'([\d,]+)\s*Followers', text)
+                    if match:
+                        book_data['followers'] = int(match.group(1).replace(',', ''))
+                
+                # Views
+                elif "Views" in text and "Average" not in text:
+                    match = re.search(r'([\d,]+)\s*Views', text)
+                    if match:
+                        book_data['total_views'] = int(match.group(1).replace(',', ''))
+                
+                # Pages
+                elif "Pages" in text:
+                    match = re.search(r'([\d,]+)\s*Pages', text)
+                    if match:
+                        book_data['pages'] = int(match.group(1).replace(',', ''))
+                
+                # Chapters
+                elif "Chapters" in text:
+                    match = re.search(r'([\d,]+)\s*Chapters', text)
+                    if match:
+                        book_data['chapters'] = int(match.group(1).replace(',', ''))
+                
+                # Rating - look for the star span
+                star_span = item.find("span", class_=re.compile(r"star-"))
+                if star_span:
+                    # Try to get rating from title attribute
+                    rating_title = star_span.get('title', '')
+                    try:
+                        book_data['overall_score'] = float(rating_title)
+                    except ValueError:
+                        # Try to extract from the style or class
+                        pass
+        
+        # Calculate word count (pages * 275)
+        if 'pages' in book_data:
+            book_data['word_count'] = book_data['pages'] * 275
+        
+        # Last update date (if available)
+        time_elem = book_element.find("time")
+        if time_elem:
+            book_data['last_update'] = time_elem.get('datetime', '')
+        
+    except Exception as e:
+        logging.error(f"Error parsing book data: {e}")
+        return None
+    
+    return book_data
 
 def parse_book_stats(soup):
     """Extracts statistics from a book page with enhanced data collection."""
@@ -1215,6 +1287,24 @@ def api_rising_stars():
             "processing_time": f"{time.time() - start_time:.2f} seconds"
         }), 500
     
+    # Get complete target book data
+    logging.info(f"📚 [{request_id}] Fetching complete data for target book ID: {book_id}")
+    target_book_data = get_book_data(book_id)
+    if not target_book_data:
+        # Fallback to basic data
+        logging.warning(f"⚠️ [{request_id}] Could not fetch complete book data, using basic info")
+        target_book_data = {
+            'book_id': book_id,
+            'title': title,
+            'tags': tags,
+            'status': 'unknown'
+        }
+    else:
+        # Ensure we have all the data and tags are consistent
+        target_book_data['tags'] = tags  # Use tags from initial fetch as they might be more complete
+        target_book_data['book_id'] = book_id  # Ensure book_id is string for consistency
+        logging.info(f"✅ [{request_id}] Complete book data fetched: {target_book_data.get('followers', 0)} followers, {target_book_data.get('pages', 0)} pages")
+    
     # Prepare headers for requests
     headers = {
         "User-Agent": random.choice(USER_AGENTS),
@@ -1239,19 +1329,43 @@ def api_rising_stars():
         if cache_key_main_result in cache:
             final_results["Main Rising Stars"] = cache[cache_key_main_result]
             logging.info(f"📋 [{request_id}] Cache hit for main rising stars result: {book_id}")
+            
+            # Also check for cached discovered books
+            cache_key_main_books = f"main_rs_discovered_{book_id}"
+            if cache_key_main_books in cache:
+                discovered_books['main_rising_stars'] = cache[cache_key_main_books]
         else:
             # Ensure we start with the results from checking the Main Rising Stars
             try:
                 logging.info(f"🔍 [{request_id}] Checking Main Rising Stars list...")
                 
-                # Get detailed book data from main RS
-                main_books = get_book_details_from_main_rs(headers)
+                # Get detailed book data from main RS with comprehensive parsing
+                main_books = []
+                response = fetch_with_retries(MAIN_RISING_STARS_URL, headers)
+                soup = BeautifulSoup(response.text, "html.parser")
+                
+                book_entries = soup.find_all("div", class_="fiction-list-item")
+                
+                for i, entry in enumerate(book_entries):
+                    position = i + 1
+                    
+                    # Use the comprehensive parser
+                    book_data = parse_rising_stars_book_data(entry)
+                    if book_data and book_data.get('book_id'):
+                        book_data['position'] = position
+                        main_books.append(book_data)
+                        
+                        logging.info(f"📊 [{request_id}] Main RS #{position}: {book_data.get('title', 'Unknown')} "
+                                   f"(ID: {book_data['book_id']}) - "
+                                   f"Followers: {book_data.get('followers', 'N/A')}, "
+                                   f"Views: {book_data.get('total_views', 'N/A')}")
+                
                 discovered_books['main_rising_stars'] = main_books
                 
                 # Check if our book is in the list
-                book_ids = [book['book_id'] for book in main_books]
-                if book_id in book_ids:
-                    position = book_ids.index(book_id) + 1
+                book_ids = [str(book['book_id']) for book in main_books]
+                if str(book_id) in book_ids:
+                    position = book_ids.index(str(book_id)) + 1
                     main_result = f"✅ Found in position #{position}"
                     logging.info(f"✅ [{request_id}] Book {book_id} found in Main Rising Stars at position {position}")
                 else:
@@ -1260,9 +1374,10 @@ def api_rising_stars():
                 
                 final_results["Main Rising Stars"] = main_result
                 
-                # Cache the result
+                # Cache the result and discovered books
                 with cache_lock:
                     cache[cache_key_main_result] = main_result
+                    cache[f"main_rs_discovered_{book_id}"] = main_books
             
             except Exception as e:
                 logging.exception(f"⚠️ [{request_id}] Failed to check Main Rising Stars: {str(e)}")
@@ -1272,24 +1387,51 @@ def api_rising_stars():
     genres_processed = []
     for tag in tags:
         cache_key_genre = f"genre_result_{book_id}_{tag}"
+        cache_key_genre_books = f"genre_books_discovered_{book_id}_{tag}"
         with cache_lock:
             if cache_key_genre in cache:
                 final_results[tag] = cache[cache_key_genre]
                 genres_processed.append(tag)
                 logging.info(f"📋 [{request_id}] Cache hit for genre result: {tag}")
+                
+                # Also get cached discovered books for this genre
+                if cache_key_genre_books in cache:
+                    discovered_books['genre_rising_stars'][tag] = cache[cache_key_genre_books]
     
     # Process remaining genres
     remaining_tags = [tag for tag in tags if tag not in genres_processed]
     for tag in remaining_tags:
         try:
-            # Get all books in this genre's rising stars
-            genre_books = get_books_for_genre(tag, headers)
+            # Get all books in this genre's rising stars with comprehensive data
+            url = f"{GENRE_RISING_STARS_URL}{tag}"
+            logging.info(f"🔍 [{request_id}] Fetching Rising Stars for genre: {tag}")
+            
+            response = fetch_with_retries(url, headers, timeout=15)
+            soup = BeautifulSoup(response.text, "html.parser")
+            
+            book_entries = soup.find_all("div", class_="fiction-list-item")
+            genre_books = []
+            
+            for i, entry in enumerate(book_entries):
+                position = i + 1
+                
+                # Use the comprehensive parser
+                book_data = parse_rising_stars_book_data(entry)
+                if book_data and book_data.get('book_id'):
+                    book_data['position'] = position
+                    genre_books.append(book_data)
+                    
+                    if position <= 10:  # Only log first 10 to avoid spam
+                        logging.info(f"📚 [{request_id}] {tag} RS #{position}: {book_data.get('title', 'Unknown')} "
+                                   f"(ID: {book_data['book_id']}) - "
+                                   f"Followers: {book_data.get('followers', 'N/A')}")
+            
             discovered_books['genre_rising_stars'][tag] = genre_books
             
             # Check if our book is in the list
-            book_ids = [book['book_id'] for book in genre_books]
-            if book_id in book_ids:
-                position = book_ids.index(book_id) + 1
+            book_ids = [str(book['book_id']) for book in genre_books]
+            if str(book_id) in book_ids:
+                position = book_ids.index(str(book_id)) + 1
                 result = f"✅ Found in position #{position}"
                 logging.info(f"✅ [{request_id}] Book {book_id} found in {tag} at position {position}")
             else:
@@ -1298,9 +1440,10 @@ def api_rising_stars():
             
             final_results[tag] = result
             
-            # Cache the result
+            # Cache the result and discovered books
             with cache_lock:
                 cache[f"genre_result_{book_id}_{tag}"] = result
+                cache[f"genre_books_discovered_{book_id}_{tag}"] = genre_books
 
         except Exception as e:
             logging.exception(f"⚠️ [{request_id}] Failed to check {tag} Rising Stars: {str(e)}")
@@ -1335,6 +1478,7 @@ def api_rising_stars():
                         distance_estimate = cache[cache_key_distance]
                         logging.info(f"📋 [{request_id}] Cache hit for distance estimate: {book_id}")
                     else:
+                        # Note: estimate_distance_to_main_rs now has access to discovered_books data
                         distance_estimate = estimate_distance_to_main_rs(book_id, final_results, tags, headers)
                         # If it's not an error and not "insufficient_data", cache it
                         if "error" not in distance_estimate and "insufficient_data" not in distance_estimate:
@@ -1344,7 +1488,7 @@ def api_rising_stars():
                 logging.critical(f"❌ [{request_id}] CRITICAL ERROR during distance estimation: {str(e)}")
                 distance_estimate = {"error": f"Error during estimation: {str(e)}"}
     
-    # Build response with discovered books
+    # Build response with discovered books and target book data
     response_data = {
         "title": title, 
         "results": final_results,
@@ -1352,13 +1496,18 @@ def api_rising_stars():
         "tags": tags,
         "request_id": request_id,
         "processing_time": f"{time.time() - start_time:.2f} seconds",
-        "discovered_books": discovered_books  # NEW: Include discovered books
+        "discovered_books": discovered_books,  # Now includes comprehensive data
+        "target_book": target_book_data  # NEW: Include complete target book data
     }
     
     # Add distance estimate if it was requested and generated
     if estimate_distance_param and distance_estimate:
         response_data["distance_estimate"] = distance_estimate
         logging.critical(f"✅ [{request_id}] Distance estimate ADDED to response")
+    
+    # Log summary of discovered books
+    logging.info(f"📊 [{request_id}] Summary: Found {len(discovered_books['main_rising_stars'])} books in Main RS, "
+               f"{sum(len(books) for books in discovered_books['genre_rising_stars'].values())} books across {len(discovered_books['genre_rising_stars'])} genre lists")
     
     return jsonify(response_data)
 
