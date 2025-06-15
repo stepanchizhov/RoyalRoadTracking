@@ -9,12 +9,57 @@ import time
 import cachetools
 from datetime import datetime
 import threading
+import os
+import socket
 
 # Enhanced logging
 logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s - [%(threadName)s] - %(levelname)s - %(message)s"
 )
+
+# Detect which Render instance we're on
+def get_server_tier():
+    """Detect server tier based on hostname or environment"""
+    try:
+        # First check environment variable
+        env_tier = os.environ.get('SERVER_TIER', '').lower()
+        if env_tier in ['free', 'pro', 'premium']:
+            logging.info(f"🔑 Server tier from environment: {env_tier}")
+            return env_tier
+        
+        # Check Render service name
+        render_service = os.environ.get('RENDER_SERVICE_NAME', '')
+        if 'paid' in render_service.lower():
+            logging.info(f"🔑 Detected PAID server from RENDER_SERVICE_NAME: {render_service}")
+            return 'pro'
+        
+        # Check hostname
+        hostname = socket.gethostname()
+        if 'paid' in hostname.lower():
+            logging.info(f"🔑 Detected PAID server from hostname: {hostname}")
+            return 'pro'
+            
+        # Check Render external hostname
+        render_hostname = os.environ.get('RENDER_EXTERNAL_HOSTNAME', '')
+        if 'royalroadtrackingpaid' in render_hostname:
+            logging.info(f"🔑 Detected PAID server from RENDER_EXTERNAL_HOSTNAME: {render_hostname}")
+            return 'pro'
+        elif 'royalroadtracking' in render_hostname:
+            logging.info(f"🆓 Detected FREE server from RENDER_EXTERNAL_HOSTNAME: {render_hostname}")
+            return 'free'
+            
+        # Default to free
+        logging.info("🆓 Defaulting to FREE tier")
+        return 'free'
+        
+    except Exception as e:
+        logging.error(f"Error detecting server tier: {e}")
+        return 'free'
+
+# Get server tier on startup
+SERVER_TIER = get_server_tier()
+logging.info(f"🚀 Server starting with tier: {SERVER_TIER}")
 
 app = Flask(__name__)
 CORS(app, resources={r"/*": {"origins": "*"}})
