@@ -1516,6 +1516,10 @@ def analyze_book():
     """Main endpoint for analyzing book performance with tier-based throttling."""
     start_time = time.time()
     
+    # Get the referer header to determine which page the request came from
+    referer = request.headers.get('Referer', '')
+    logging.info(f"🔍 Request Referer: {referer}")
+    
     # DEBUG: Log all received parameters
     logging.info(f"🔍 DEBUG - All request args: {dict(request.args)}")
     
@@ -1524,10 +1528,24 @@ def analyze_book():
     min_chapters = int(request.args.get('min_chapters', 2))
     genres = request.args.getlist('genres')
     
-    # NEW: Get throttle parameters from PHP with better parsing
+    # Get tier from request args (as fallback)
+    tier_from_args = request.args.get('tier', 'free')
+    
+    # Determine tier based on referer URL
+    if 'https://stepan.chizhov.com/hows-my-book-doing-paid/' in referer:
+        tier = 'pro'
+        logging.info(f"🔑 Detected PRO tier from referer: {referer}")
+    elif 'https://stepan.chizhov.com/book-analyzer/' in referer:
+        tier = 'free'
+        logging.info(f"🆓 Detected FREE tier from referer: {referer}")
+    else:
+        # Fallback to tier from args or default to free
+        tier = tier_from_args
+        logging.info(f"⚠️ Unknown referer, using tier from args: {tier}")
+    
+    # Get throttle parameters from PHP with better parsing
     throttle_min_str = request.args.get('throttle_min', '0')
     throttle_max_str = request.args.get('throttle_max', '0')
-    tier = request.args.get('tier', 'free')
     
     # Parse with error handling
     try:
@@ -1714,6 +1732,8 @@ def analyze_book():
             'processing_time': f"{time.time() - start_time:.2f} seconds",
             'throttle_info': {
                 'tier': tier,
+                'tier_source': 'referer' if referer else 'default',
+                'referer': referer,
                 'total_delay': f"{total_delay_applied:.2f} seconds",
                 'avg_delay': f"{(total_delay_applied / delay_count if delay_count > 0 else 0):.2f} seconds",
                 'delays_applied': delay_count,
