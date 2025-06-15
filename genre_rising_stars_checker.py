@@ -1573,20 +1573,20 @@ def analyze_book():
     min_chapters = int(request.args.get('min_chapters', 2))
     genres = request.args.getlist('genres')
     
-    # Get tier from request args (as fallback)
+    # ALWAYS use server tier - it's detected at startup based on which server we're on
+    tier = SERVER_TIER
     tier_from_args = request.args.get('tier', 'free')
+    tier_from_referer = 'unknown'
     
-    # Determine tier based on referer URL
+    # Log what tier would have been detected from referer (for debugging)
     if 'hows-my-book-doing-paid' in referer:
-        tier = 'pro'
-        logging.info(f"🔑 Detected PRO tier from referer: {referer}")
+        tier_from_referer = 'pro'
     elif 'book-analyzer' in referer:
-        tier = 'free'
-        logging.info(f"🆓 Detected FREE tier from referer: {referer}")
-    else:
-        # Fallback to tier from args or default to free
-        tier = tier_from_args
-        logging.info(f"⚠️ Unknown referer: {referer}, using tier from args: {tier}")
+        tier_from_referer = 'free'
+    
+    logging.info(f"🔑 Server tier: {SERVER_TIER} (detected at startup)")
+    logging.info(f"📝 Tier from args: {tier_from_args}, Tier from referer: {tier_from_referer}")
+    logging.info(f"✅ Using server tier: {tier}")
     
     # Get throttle parameters from PHP with better parsing
     throttle_min_str = request.args.get('throttle_min', '0')
@@ -1605,22 +1605,33 @@ def analyze_book():
         logging.error(f"Failed to parse throttle_max: {throttle_max_str}")
         throttle_max = 0.0
     
-    # If we didn't get valid throttle params, use tier-based defaults
-    if throttle_min == 0 and throttle_max == 0:
-        logging.warning(f"No throttle parameters received, using defaults for tier: {tier}")
-        # Define default delays by tier (matching PHP)
-        tier_defaults = {
-            'free': (1.5, 2.5),      # 1.5-2.5 seconds
-            'pro': (0.1, 0.5),       # 0.1-0.5 seconds
-            'tier1': (0.1, 0.5),     # 0.1-0.5 seconds
-            'premium': (0.1, 0.25),  # 0.1-0.25 seconds
-            'tier2': (0.1, 0.25)     # 0.1-0.25 seconds
-        }
-        throttle_min, throttle_max = tier_defaults.get(tier, (1.5, 2.5))
-        logging.info(f"Using tier defaults: {throttle_min}-{throttle_max} seconds")
+    # ALWAYS use tier-based defaults based on SERVER_TIER
+    tier_defaults = {
+        'free': (1.5, 2.5),      # 1.5-2.5 seconds
+        'pro': (0.1, 0.5),       # 0.1-0.5 seconds
+        'tier1': (0.1, 0.5),     # 0.1-0.5 seconds
+        'premium': (0.1, 0.25),  # 0.1-0.25 seconds
+        'tier2': (0.1, 0.25)     # 0.1-0.25 seconds
+    }
     
-    # Log throttle settings
-    logging.info(f"🔧 Throttle settings - Tier: {tier}, Min: {throttle_min}s, Max: {throttle_max}s")
+    # Get server tier defaults
+    default_min, default_max = tier_defaults.get(tier, (1.5, 2.5))
+    
+    # If no throttle params received or they're 0, use server defaults
+    if throttle_min == 0 or throttle_max == 0:
+        logging.info(f"No valid throttle parameters received, using server tier defaults")
+        throttle_min = default_min
+        throttle_max = default_max
+    else:
+        # If throttle params were received, ensure they're not faster than server allows
+        if throttle_min < default_min:
+            logging.warning(f"Requested throttle_min {throttle_min} is faster than server allows {default_min}, using server minimum")
+            throttle_min = default_min
+        if throttle_max < default_max:
+            logging.warning(f"Requested throttle_max {throttle_max} is faster than server allows {default_max}, using server minimum")
+            throttle_max = default_max
+    
+    logging.info(f"🔧 Final throttle settings - Server Tier: {tier}, Min: {throttle_min}s, Max: {throttle_max}s")
     
     # Extract book ID
     book_id = extract_book_id(book_url)
@@ -1776,9 +1787,8 @@ def analyze_book():
             },
             'processing_time': f"{time.time() - start_time:.2f} seconds",
             'throttle_info': {
-                'tier': tier,
-                'tier_source': 'referer' if referer else 'default',
-                'referer': referer,
+                'server_tier': SERVER_TIER,
+                'server_instance': os.environ.get('RENDER_SERVICE_NAME', 'unknown'),
                 'total_delay': f"{total_delay_applied:.2f} seconds",
                 'avg_delay': f"{(total_delay_applied / delay_count if delay_count > 0 else 0):.2f} seconds",
                 'delays_applied': delay_count,
@@ -1798,9 +1808,27 @@ def analyze_book():
 @app.route('/health', methods=['GET'])
 def health_check():
     """Health check endpoint."""
+    tier_defaults = {
+        'free': (1.5, 2.5),
+        'pro': (0.1, 0.5),
+        'premium': (0.1, 0.25)
+    }
+    
+    throttle_min, throttle_max = tier_defaults.get(SERVER_TIER, (1.5, 2.5))
+    
     return jsonify({
         'status': 'healthy',
-        'time': datetime.now().isoformat()
+        'time': datetime.now().isoformat(),
+        'server_tier': SERVER_TIER,
+        'throttle_defaults': {
+            'min': throttle_min,
+            'max': throttle_max
+        },
+        'server_info': {
+            'hostname': socket.gethostname(),
+            'render_service': os.environ.get('RENDER_SERVICE_NAME', 'unknown'),
+            'render_hostname': os.environ.get('RENDER_EXTERNAL_HOSTNAME', 'unknown')
+        }
     })
 
 @app.route('/progress_stream')
