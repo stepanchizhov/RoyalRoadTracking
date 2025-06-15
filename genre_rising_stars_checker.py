@@ -1518,6 +1518,17 @@ def analyze_book():
     
     # DEBUG: Log all received parameters
     logging.info(f"🔍 DEBUG - All request args: {dict(request.args)}")
+    logging.info(f"🔍 DEBUG - Request URL: {request.url}")
+    logging.info(f"🔍 DEBUG - Request headers: {dict(request.headers)}")
+    
+    # Also check if parameters are in headers
+    throttle_min_header = request.headers.get('X-Throttle-Min', None)
+    throttle_max_header = request.headers.get('X-Throttle-Max', None)
+    tier_header = request.headers.get('X-Tier', None)
+    
+    logging.info(f"🔍 DEBUG - Header X-Throttle-Min: {throttle_min_header}")
+    logging.info(f"🔍 DEBUG - Header X-Throttle-Max: {throttle_max_header}")
+    logging.info(f"🔍 DEBUG - Header X-Tier: {tier_header}")
     
     book_url = request.args.get('book_url', '').strip()
     comparison_size = int(request.args.get('comparison_size', 20))
@@ -1528,6 +1539,19 @@ def analyze_book():
     throttle_min_str = request.args.get('throttle_min', '0')
     throttle_max_str = request.args.get('throttle_max', '0')
     tier = request.args.get('tier', 'free')
+    
+    # Try headers as fallback if query params are missing
+    if throttle_min_str == '0' and throttle_min_header:
+        throttle_min_str = throttle_min_header
+        logging.info(f"Using throttle_min from header: {throttle_min_str}")
+    
+    if throttle_max_str == '0' and throttle_max_header:
+        throttle_max_str = throttle_max_header
+        logging.info(f"Using throttle_max from header: {throttle_max_str}")
+    
+    if tier == 'free' and tier_header and tier_header != 'free':
+        tier = tier_header
+        logging.info(f"Using tier from header: {tier}")
     
     # Parse with error handling
     try:
@@ -1541,6 +1565,10 @@ def analyze_book():
     except (ValueError, TypeError):
         logging.error(f"Failed to parse throttle_max: {throttle_max_str}")
         throttle_max = 0.0
+    
+    # Log final parsed values
+    logging.info(f"🔧 Final throttle values - Min: {throttle_min}s, Max: {throttle_max}s, Tier: {tier}")
+
     
     # If we didn't get valid throttle params, use tier-based defaults
     if throttle_min == 0 and throttle_max == 0:
