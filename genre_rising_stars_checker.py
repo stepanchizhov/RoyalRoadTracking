@@ -1607,7 +1607,7 @@ def analyze_book():
     
     # ALWAYS use tier-based defaults based on SERVER_TIER
     tier_defaults = {
-        'free': (1.5, 2.5),      # 1.5-2.5 seconds
+        'free': (0.75, 2.5),      # 0.75-2.5 seconds
         'pro': (0.1, 0.5),       # 0.1-0.5 seconds
         'tier1': (0.1, 0.5),     # 0.1-0.5 seconds
         'premium': (0.1, 0.25),  # 0.1-0.25 seconds
@@ -1615,7 +1615,7 @@ def analyze_book():
     }
     
     # Get server tier defaults
-    default_min, default_max = tier_defaults.get(tier, (1.5, 2.5))
+    default_min, default_max = tier_defaults.get(tier, (0.75, 2.5))
     
     # If no throttle params received or they're 0, use server defaults
     if throttle_min == 0 or throttle_max == 0:
@@ -1809,12 +1809,12 @@ def analyze_book():
 def health_check():
     """Health check endpoint."""
     tier_defaults = {
-        'free': (1.5, 2.5),
+        'free': (0.75, 2.5),
         'pro': (0.1, 0.5),
         'premium': (0.1, 0.25)
     }
     
-    throttle_min, throttle_max = tier_defaults.get(SERVER_TIER, (1.5, 2.5))
+    throttle_min, throttle_max = tier_defaults.get(SERVER_TIER, (0.75, 2.5))
     
     return jsonify({
         'status': 'healthy',
