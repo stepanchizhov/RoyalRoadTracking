@@ -1524,15 +1524,37 @@ def analyze_book():
     min_chapters = int(request.args.get('min_chapters', 2))
     genres = request.args.getlist('genres')
     
-    # NEW: Get throttle parameters from PHP
-    throttle_min = float(request.args.get('throttle_min', 0))  # in seconds
-    throttle_max = float(request.args.get('throttle_max', 0))  # in seconds
+    # NEW: Get throttle parameters from PHP with better parsing
+    throttle_min_str = request.args.get('throttle_min', '0')
+    throttle_max_str = request.args.get('throttle_max', '0')
     tier = request.args.get('tier', 'free')
     
-    # DEBUG: Log what we parsed
-    logging.info(f"🔍 DEBUG - Parsed throttle_min: {throttle_min} (type: {type(throttle_min)})")
-    logging.info(f"🔍 DEBUG - Parsed throttle_max: {throttle_max} (type: {type(throttle_max)})")
-    logging.info(f"🔍 DEBUG - Parsed tier: {tier}")
+    # Parse with error handling
+    try:
+        throttle_min = float(throttle_min_str) if throttle_min_str else 0.0
+    except (ValueError, TypeError):
+        logging.error(f"Failed to parse throttle_min: {throttle_min_str}")
+        throttle_min = 0.0
+    
+    try:
+        throttle_max = float(throttle_max_str) if throttle_max_str else 0.0
+    except (ValueError, TypeError):
+        logging.error(f"Failed to parse throttle_max: {throttle_max_str}")
+        throttle_max = 0.0
+    
+    # If we didn't get valid throttle params, use tier-based defaults
+    if throttle_min == 0 and throttle_max == 0:
+        logging.warning(f"No throttle parameters received, using defaults for tier: {tier}")
+        # Define default delays by tier (matching PHP)
+        tier_defaults = {
+            'free': (1.5, 2.5),      # 1.5-2.5 seconds
+            'pro': (0.1, 0.5),       # 0.1-0.5 seconds
+            'tier1': (0.1, 0.5),     # 0.1-0.5 seconds
+            'premium': (0.1, 0.25),  # 0.1-0.25 seconds
+            'tier2': (0.1, 0.25)     # 0.1-0.25 seconds
+        }
+        throttle_min, throttle_max = tier_defaults.get(tier, (1.5, 2.5))
+        logging.info(f"Using tier defaults: {throttle_min}-{throttle_max} seconds")
     
     # Log throttle settings
     logging.info(f"🔧 Throttle settings - Tier: {tier}, Min: {throttle_min}s, Max: {throttle_max}s")
@@ -1641,6 +1663,7 @@ def analyze_book():
         # Fetch detailed data for comparison books with tier-based throttling
         comparison_data = []
         total_delay_applied = 0
+        delay_count = 0
         
         for i, book in enumerate(similar_books):
             if i % 10 == 0:
@@ -1650,22 +1673,28 @@ def analyze_book():
             if book_data:
                 comparison_data.append(book_data)
             
-            # Apply tier-based throttling between book fetches
-            if throttle_min > 0 and throttle_max > 0 and i < len(similar_books) - 1:
-                # Random delay between min and max
-                delay = random.uniform(throttle_min, throttle_max)
-                logging.info(f"⏳ Applying throttle delay: {delay:.2f}s (book {i+1}/{len(similar_books)})")
-                time.sleep(delay)
-                total_delay_applied += delay
-            else:
-                # Fall back to original delay if no throttle params
-                default_delay = get_random_delay()
-                logging.info(f"⏳ Using default delay: {default_delay:.2f}s (no throttle params received)")
-                time.sleep(default_delay)
+            # Apply tier-based throttling between book fetches (not after the last book)
+            if i < len(similar_books) - 1:  # Don't delay after the last book
+                if throttle_min > 0 and throttle_max > 0:
+                    # Random delay between min and max
+                    delay = random.uniform(throttle_min, throttle_max)
+                    logging.info(f"⏳ Applying throttle delay: {delay:.2f}s (book {i+1}/{len(similar_books)})")
+                    time.sleep(delay)
+                    total_delay_applied += delay
+                    delay_count += 1
+                else:
+                    # Fall back to original delay if no throttle params
+                    default_delay = get_random_delay()
+                    logging.info(f"⏳ Using default delay: {default_delay:.2f}s (no throttle params)")
+                    time.sleep(default_delay)
+                    total_delay_applied += default_delay
+                    delay_count += 1
         
         # Log total throttling impact
         if total_delay_applied > 0:
+            avg_delay = total_delay_applied / delay_count if delay_count > 0 else 0
             logging.info(f"⏱️ Total throttle delay applied: {total_delay_applied:.2f}s for tier '{tier}'")
+            logging.info(f"⏱️ Average delay per book: {avg_delay:.2f}s ({delay_count} delays applied)")
         else:
             logging.warning(f"⚠️ No throttle delays were applied! Check parameter passing.")
         
@@ -1686,12 +1715,9 @@ def analyze_book():
             'throttle_info': {
                 'tier': tier,
                 'total_delay': f"{total_delay_applied:.2f} seconds",
-                'delay_per_book': f"{throttle_min:.2f}-{throttle_max:.2f} seconds",
-                'debug_received_params': {
-                    'throttle_min': throttle_min,
-                    'throttle_max': throttle_max,
-                    'tier': tier
-                }
+                'avg_delay': f"{(total_delay_applied / delay_count if delay_count > 0 else 0):.2f} seconds",
+                'delays_applied': delay_count,
+                'delay_per_book': f"{throttle_min:.2f}-{throttle_max:.2f} seconds"
             },
             'comparison_books': comparison_data  # Include all comparison books
         }
