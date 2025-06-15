@@ -1532,10 +1532,10 @@ def analyze_book():
     tier_from_args = request.args.get('tier', 'free')
     
     # Determine tier based on referer URL
-    if 'https://stepan.chizhov.com/hows-my-book-doing-paid/' in referer:
+    if 'hows-my-book-doing-paid' in referer:
         tier = 'pro'
         logging.info(f"🔑 Detected PRO tier from referer: {referer}")
-    elif 'https://stepan.chizhov.com/book-analyzer/' in referer:
+    elif 'book-analyzer' in referer:
         tier = 'free'
         logging.info(f"🆓 Detected FREE tier from referer: {referer}")
     else:
