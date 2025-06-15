@@ -1541,7 +1541,7 @@ def analyze_book():
     else:
         # Fallback to tier from args or default to free
         tier = tier_from_args
-        logging.info(f"⚠️ Unknown referer, using tier from args: {tier}")
+        logging.info(f"⚠️ Unknown {referer}, using tier from args: {tier}")
     
     # Get throttle parameters from PHP with better parsing
     throttle_min_str = request.args.get('throttle_min', '0')
