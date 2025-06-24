@@ -120,116 +120,45 @@ class RoyalRoadTrendingScraper:
                 return None
         return None
         
-    def _scrape_book_basic_data(self, book_url):
-        """Get basic book data from its page"""
-        try:
-            self._random_delay(0.5, 1.5)  # Shorter delay for individual book pages
-            
-            response = self.session.get(book_url, timeout=30)
-            response.raise_for_status()
-            
-            soup = BeautifulSoup(response.content, 'html.parser')
-            
-            # Extract basic information
-            book_data = {
-                'book_id': self._extract_book_id(book_url),
-                'url': book_url,
-                'title': None,
-                'author': None,
-                'status': 'ongoing',
-                'tags': [],
-                'followers': 0,
-                'favorites': 0,
-                'total_views': 0,
-                'pages': 0,
-                'chapters': 0,
-                'overall_score': 0.0,
-                'ratings': 0
-            }
-            
-            # Title
-            title_elem = soup.find('h1', {'property': 'name'})
-            if title_elem:
-                book_data['title'] = title_elem.get_text(strip=True)
-            
-            # Author
-            author_elem = soup.find('h4', class_='mt-card-author')
-            if author_elem:
-                author_link = author_elem.find('a')
-                if author_link:
-                    book_data['author'] = author_link.get_text(strip=True)
-            
-            # Status
-            status_elem = soup.find('span', class_='label')
-            if status_elem:
-                status_text = status_elem.get_text(strip=True).lower()
-                if 'ongoing' in status_text:
-                    book_data['status'] = 'ongoing'
-                elif 'completed' in status_text:
-                    book_data['status'] = 'completed'
-                elif 'hiatus' in status_text:
-                    book_data['status'] = 'hiatus'
-                elif 'dropped' in status_text:
-                    book_data['status'] = 'dropped'
-            
-            # Tags/Genres
-            tag_elements = soup.find_all('span', class_='tags')
-            for tag_elem in tag_elements:
-                tag_links = tag_elem.find_all('a')
-                for tag_link in tag_links:
-                    tag_text = tag_link.get_text(strip=True)
-                    if tag_text:
-                        book_data['tags'].append(tag_text)
-            
-            # Stats from the stats table
-            stats_table = soup.find('table', class_='fiction-stats')
-            if stats_table:
-                for row in stats_table.find_all('tr'):
-                    cells = row.find_all('td')
-                    if len(cells) >= 2:
-                        label = cells[0].get_text(strip=True).lower()
-                        value_text = cells[1].get_text(strip=True).replace(',', '')
-                        
-                        try:
-                            if 'follower' in label:
-                                book_data['followers'] = int(value_text)
-                            elif 'favorite' in label:
-                                book_data['favorites'] = int(value_text)
-                            elif 'total views' in label:
-                                book_data['total_views'] = int(value_text)
-                            elif 'pages' in label:
-                                book_data['pages'] = int(value_text)
-                            elif 'chapters' in label:
-                                book_data['chapters'] = int(value_text)
-                        except ValueError:
-                            continue
-            
-            # Rating information
-            rating_elem = soup.find('span', class_='star-rating')
-            if rating_elem:
-                # Extract overall score
-                title_attr = rating_elem.get('title', '')
-                if 'out of 5' in title_attr:
-                    try:
-                        score_text = title_attr.split(' out of 5')[0].split(' ')[-1]
-                        book_data['overall_score'] = float(score_text)
-                    except (ValueError, IndexError):
-                        pass
-                
-                # Extract number of ratings
-                rating_count_elem = rating_elem.find_next('span', class_='review-count')
-                if rating_count_elem:
-                    count_text = rating_count_elem.get_text(strip=True)
-                    try:
-                        book_data['ratings'] = int(count_text.replace('(', '').replace(')', '').replace(',', ''))
-                    except ValueError:
-                        pass
-            
-            return book_data
-            
-        except Exception as e:
-            logging.error(f"Error scraping book data from {book_url}: {str(e)}")
-            return None
+def _scrape_book_basic_data(self, book_url):
+    """Get basic book data from its page"""
+    try:
+        self._random_delay(0.5, 1.5)  # Shorter delay for individual book pages
+        
+        # Use cloudscraper like in fetch_with_retries
+        scraper = get_scraper()
+        headers = {
+            "User-Agent": random.choice(USER_AGENTS),
+            "Accept": "text/html,application/xhtml+xml,application/xml",
+            "Accept-Language": "en-US,en;q=0.9",
+        }
+        
+        response = scraper.get(book_url, headers=headers, timeout=30)
+        response.raise_for_status()
+        
+        soup = BeautifulSoup(response.text, 'html.parser')
+        
+        # Use the existing parse_book_stats function
+        book_data = parse_book_stats(soup)
+        
+        # Add the book_id and url
+        book_data['book_id'] = self._extract_book_id(book_url)
+        book_data['url'] = book_url
+        
+        # Rename 'genres' to 'tags' for consistency with the rest of the scraper
+        book_data['tags'] = book_data.get('genres', [])
+        
+        # Map some fields to match expected format
+        book_data['total_views'] = book_data.get('views', 0)
+        
+        logging.debug(f"Scraped book data: Title={book_data.get('title')}, Followers={book_data.get('followers')}")
+        
+        return book_data
+        
+    except Exception as e:
+        logging.error(f"Error scraping book data from {book_url}: {str(e)}")
+        logging.exception("Full traceback:")
+        return None
     
     def scrape_trending_page(self, trending_url, trending_type="main", limit=50):
         """
