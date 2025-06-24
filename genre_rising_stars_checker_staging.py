@@ -9,12 +9,61 @@ import time
 import cachetools
 from datetime import datetime
 import threading
+import os
+import socket
+import requests
+import json
+from urllib.parse import urljoin, urlparse
+import hashlib
 
 # Enhanced logging
 logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s - [%(threadName)s] - %(levelname)s - %(message)s"
 )
+
+# Detect which Render instance we're on
+def get_server_tier():
+    """Detect server tier based on hostname or environment"""
+    try:
+        # First check environment variable
+        env_tier = os.environ.get('SERVER_TIER', '').lower()
+        if env_tier in ['free', 'pro', 'premium']:
+            logging.info(f"🔑 Server tier from environment: {env_tier}")
+            return env_tier
+        
+        # Check Render service name
+        render_service = os.environ.get('RENDER_SERVICE_NAME', '')
+        if 'paid' in render_service.lower():
+            logging.info(f"🔑 Detected PAID server from RENDER_SERVICE_NAME: {render_service}")
+            return 'pro'
+        
+        # Check hostname
+        hostname = socket.gethostname()
+        if 'paid' in hostname.lower():
+            logging.info(f"🔑 Detected PAID server from hostname: {hostname}")
+            return 'pro'
+            
+        # Check Render external hostname
+        render_hostname = os.environ.get('RENDER_EXTERNAL_HOSTNAME', '')
+        if 'royalroadtrackingpaid' in render_hostname:
+            logging.info(f"🔑 Detected PAID server from RENDER_EXTERNAL_HOSTNAME: {render_hostname}")
+            return 'pro'
+        elif 'royalroadtracking' in render_hostname:
+            logging.info(f"🆓 Detected FREE server from RENDER_EXTERNAL_HOSTNAME: {render_hostname}")
+            return 'free'
+            
+        # Default to free
+        logging.info("🆓 Defaulting to FREE tier")
+        return 'free'
+        
+    except Exception as e:
+        logging.error(f"Error detecting server tier: {e}")
+        return 'free'
+
+# Get server tier on startup
+SERVER_TIER = get_server_tier()
+logging.info(f"🚀 Server starting with tier: {SERVER_TIER}")
 
 app = Flask(__name__)
 CORS(app, resources={r"/*": {"origins": "*"}})
@@ -39,6 +88,336 @@ BASE_URL = "https://www.royalroad.com"
 SEARCH_URL = f"{BASE_URL}/fictions/search"
 MAIN_RISING_STARS_URL = "https://www.royalroad.com/fictions/rising-stars"
 GENRE_RISING_STARS_URL = "https://www.royalroad.com/fictions/rising-stars?genre="
+
+
+
+class RoyalRoadTrendingScraper:
+    """Scraper for Royal Road trending pages"""
+    
+    def __init__(self, base_delay=1.0, max_delay=3.0):
+        self.base_url = "https://www.royalroad.com"
+        self.base_delay = base_delay
+        self.max_delay = max_delay
+        self.session = requests.Session()
+        self.session.headers.update({
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'
+        })
+        
+    def _random_delay(self, min_delay=None, max_delay=None):
+        """Add random delay between requests"""
+        min_d = min_delay or self.base_delay
+        max_d = max_delay or self.max_delay
+        delay = random.uniform(min_d, max_d)
+        time.sleep(delay)
+        return delay
+        
+    def _extract_book_id(self, url):
+        """Extract book ID from Royal Road URL"""
+        if '/fiction/' in url:
+            try:
+                return int(url.split('/fiction/')[1].split('/')[0])
+            except (IndexError, ValueError):
+                return None
+        return None
+        
+    def _scrape_book_basic_data(self, book_url):
+        """Get basic book data from its page"""
+        try:
+            self._random_delay(0.5, 1.5)  # Shorter delay for individual book pages
+            
+            response = self.session.get(book_url, timeout=30)
+            response.raise_for_status()
+            
+            soup = BeautifulSoup(response.content, 'html.parser')
+            
+            # Extract basic information
+            book_data = {
+                'book_id': self._extract_book_id(book_url),
+                'url': book_url,
+                'title': None,
+                'author': None,
+                'status': 'ongoing',
+                'tags': [],
+                'followers': 0,
+                'favorites': 0,
+                'total_views': 0,
+                'pages': 0,
+                'chapters': 0,
+                'overall_score': 0.0,
+                'ratings': 0
+            }
+            
+            # Title
+            title_elem = soup.find('h1', {'property': 'name'})
+            if title_elem:
+                book_data['title'] = title_elem.get_text(strip=True)
+            
+            # Author
+            author_elem = soup.find('h4', class_='mt-card-author')
+            if author_elem:
+                author_link = author_elem.find('a')
+                if author_link:
+                    book_data['author'] = author_link.get_text(strip=True)
+            
+            # Status
+            status_elem = soup.find('span', class_='label')
+            if status_elem:
+                status_text = status_elem.get_text(strip=True).lower()
+                if 'ongoing' in status_text:
+                    book_data['status'] = 'ongoing'
+                elif 'completed' in status_text:
+                    book_data['status'] = 'completed'
+                elif 'hiatus' in status_text:
+                    book_data['status'] = 'hiatus'
+                elif 'dropped' in status_text:
+                    book_data['status'] = 'dropped'
+            
+            # Tags/Genres
+            tag_elements = soup.find_all('span', class_='tags')
+            for tag_elem in tag_elements:
+                tag_links = tag_elem.find_all('a')
+                for tag_link in tag_links:
+                    tag_text = tag_link.get_text(strip=True)
+                    if tag_text:
+                        book_data['tags'].append(tag_text)
+            
+            # Stats from the stats table
+            stats_table = soup.find('table', class_='fiction-stats')
+            if stats_table:
+                for row in stats_table.find_all('tr'):
+                    cells = row.find_all('td')
+                    if len(cells) >= 2:
+                        label = cells[0].get_text(strip=True).lower()
+                        value_text = cells[1].get_text(strip=True).replace(',', '')
+                        
+                        try:
+                            if 'follower' in label:
+                                book_data['followers'] = int(value_text)
+                            elif 'favorite' in label:
+                                book_data['favorites'] = int(value_text)
+                            elif 'total views' in label:
+                                book_data['total_views'] = int(value_text)
+                            elif 'pages' in label:
+                                book_data['pages'] = int(value_text)
+                            elif 'chapters' in label:
+                                book_data['chapters'] = int(value_text)
+                        except ValueError:
+                            continue
+            
+            # Rating information
+            rating_elem = soup.find('span', class_='star-rating')
+            if rating_elem:
+                # Extract overall score
+                title_attr = rating_elem.get('title', '')
+                if 'out of 5' in title_attr:
+                    try:
+                        score_text = title_attr.split(' out of 5')[0].split(' ')[-1]
+                        book_data['overall_score'] = float(score_text)
+                    except (ValueError, IndexError):
+                        pass
+                
+                # Extract number of ratings
+                rating_count_elem = rating_elem.find_next('span', class_='review-count')
+                if rating_count_elem:
+                    count_text = rating_count_elem.get_text(strip=True)
+                    try:
+                        book_data['ratings'] = int(count_text.replace('(', '').replace(')', '').replace(',', ''))
+                    except ValueError:
+                        pass
+            
+            return book_data
+            
+        except Exception as e:
+            logging.error(f"Error scraping book data from {book_url}: {str(e)}")
+            return None
+    
+    def scrape_trending_page(self, trending_url, trending_type="main", limit=50):
+        """
+        Scrape a trending page and return book data
+        
+        Args:
+            trending_url: URL of the trending page
+            trending_type: Type of trending list (main, genre name, etc.)
+            limit: Maximum number of books to scrape (default 50)
+            
+        Returns:
+            dict: Contains books list and metadata
+        """
+        try:
+            logging.info(f"Scraping trending page: {trending_url}")
+            
+            # Get the trending page
+            response = self.session.get(trending_url, timeout=30)
+            response.raise_for_status()
+            
+            soup = BeautifulSoup(response.content, 'html.parser')
+            
+            # Find all book entries on the trending page
+            book_elements = soup.find_all('div', class_='fiction-list-item')
+            
+            books = []
+            processed_count = 0
+            
+            for position, book_elem in enumerate(book_elements, 1):
+                if processed_count >= limit:
+                    break
+                    
+                try:
+                    # Extract book URL
+                    title_link = book_elem.find('h2', class_='fiction-title').find('a')
+                    if not title_link:
+                        continue
+                        
+                    book_url = urljoin(self.base_url, title_link.get('href'))
+                    book_id = self._extract_book_id(book_url)
+                    
+                    if not book_id:
+                        continue
+                    
+                    # Get basic info from trending page
+                    book_data = {
+                        'position': position,
+                        'book_id': book_id,
+                        'url': book_url,
+                        'title': title_link.get_text(strip=True),
+                        'author': None,
+                        'tags': [],
+                        'status': 'ongoing'
+                    }
+                    
+                    # Extract author from trending page if available
+                    author_elem = book_elem.find('span', class_='author')
+                    if author_elem:
+                        book_data['author'] = author_elem.get_text(strip=True)
+                    
+                    # Extract basic stats from trending page if available
+                    stats_elem = book_elem.find('div', class_='stats')
+                    if stats_elem:
+                        # Look for follower count, views, etc.
+                        stat_spans = stats_elem.find_all('span')
+                        for span in stat_spans:
+                            text = span.get_text(strip=True).lower()
+                            if 'follower' in text:
+                                try:
+                                    book_data['followers'] = int(text.split()[0].replace(',', ''))
+                                except (ValueError, IndexError):
+                                    pass
+                    
+                    # Get comprehensive data from individual book page
+                    comprehensive_data = self._scrape_book_basic_data(book_url)
+                    if comprehensive_data:
+                        # Merge comprehensive data, keeping position from trending page
+                        comprehensive_data['position'] = position
+                        book_data = comprehensive_data
+                    
+                    books.append(book_data)
+                    processed_count += 1
+                    
+                    logging.info(f"Processed book {position}: {book_data.get('title', 'Unknown')}")
+                    
+                    # Add delay between books to be respectful
+                    self._random_delay(0.5, 1.5)
+                    
+                except Exception as e:
+                    logging.error(f"Error processing book at position {position}: {str(e)}")
+                    continue
+            
+            result = {
+                'success': True,
+                'trending_type': trending_type,
+                'trending_url': trending_url,
+                'books': books,
+                'total_found': len(books),
+                'timestamp': datetime.now().isoformat(),
+                'scrape_duration': None  # Will be calculated by caller
+            }
+            
+            logging.info(f"Successfully scraped {len(books)} books from {trending_type} trending")
+            return result
+            
+        except Exception as e:
+            logging.error(f"Error scraping trending page {trending_url}: {str(e)}")
+            return {
+                'success': False,
+                'error': str(e),
+                'trending_type': trending_type,
+                'trending_url': trending_url,
+                'books': [],
+                'timestamp': datetime.now().isoformat()
+            }
+
+# Flask/FastAPI endpoint (add to your existing API)
+def scrape_trending_page_endpoint():
+    """
+    API endpoint for trending page scraping
+    
+    Expected parameters:
+    - trending_url: URL of the trending page to scrape
+    - trending_type: Type of trending (main, genre name)
+    - limit: Maximum number of books (default 50)
+    """
+    try:
+        # Get parameters (adjust based on your framework - Flask/FastAPI)
+        data = request.get_json() if hasattr(request, 'get_json') else request.json
+        
+        trending_url = data.get('trending_url')
+        trending_type = data.get('trending_type', 'main')
+        limit = min(int(data.get('limit', 50)), 50)  # Cap at 50 for safety
+        
+        if not trending_url:
+            return {
+                'success': False,
+                'error': 'trending_url parameter is required'
+            }, 400
+        
+        # Initialize scraper
+        scraper = RoyalRoadTrendingScraper()
+        
+        # Scrape the trending page
+        start_time = time.time()
+        result = scraper.scrape_trending_page(trending_url, trending_type, limit)
+        end_time = time.time()
+        
+        # Add duration to result
+        result['scrape_duration'] = round(end_time - start_time, 2)
+        
+        if result['success']:
+            return result, 200
+        else:
+            return result, 500
+            
+    except Exception as e:
+        logging.error(f"Error in trending scraper endpoint: {str(e)}")
+        return {
+            'success': False,
+            'error': f'Internal server error: {str(e)}',
+            'timestamp': datetime.now().isoformat()
+        }, 500
+
+# Example usage function
+def test_trending_scraper():
+    """Test the trending scraper with main trending page"""
+    scraper = RoyalRoadTrendingScraper()
+    
+    # Test main trending
+    main_trending_url = "https://www.royalroad.com/fictions/trending"
+    result = scraper.scrape_trending_page(main_trending_url, "main", 10)
+    
+    print(f"Scraping result: {result['success']}")
+    print(f"Books found: {len(result['books'])}")
+    
+    if result['books']:
+        print("\nFirst few books:")
+        for book in result['books'][:3]:
+            print(f"  {book['position']}. {book['title']} by {book['author']}")
+            print(f"     Followers: {book.get('followers', 'N/A')}")
+    
+    return result
+
+if __name__ == "__main__":
+    # Test the scraper
+    test_result = test_trending_scraper()
+
 
 def get_dynamic_spread(step, total_pages):
     """Returns a spread as a percentage of total pages."""
@@ -76,8 +455,8 @@ def extract_book_id(book_url):
     return None
 
 def get_random_delay():
-    """Returns a random delay between 0.5-1.5 seconds."""
-    return random.uniform(0.5, 1.5)
+    """Returns a random delay between 1.0-2.5 seconds."""
+    return random.uniform(1.0, 2.5)
 
 def fetch_with_retries(url, headers, max_retries=3, timeout=20):
     """Fetches a URL with retry logic."""
@@ -1513,13 +1892,80 @@ def api_rising_stars():
 
 @app.route('/analyze_book', methods=['GET'])
 def analyze_book():
-    """Main endpoint for analyzing book performance."""
+    """Main endpoint for analyzing book performance with tier-based throttling."""
     start_time = time.time()
+    
+    # Get the referer header to determine which page the request came from
+    referer = request.headers.get('Referer', '')
+    logging.info(f"🔍 Request Referer: {referer}")
+    
+    # DEBUG: Log all received parameters
+    logging.info(f"🔍 DEBUG - All request args: {dict(request.args)}")
     
     book_url = request.args.get('book_url', '').strip()
     comparison_size = int(request.args.get('comparison_size', 20))
     min_chapters = int(request.args.get('min_chapters', 2))
     genres = request.args.getlist('genres')
+    
+    # ALWAYS use server tier - it's detected at startup based on which server we're on
+    tier = SERVER_TIER
+    tier_from_args = request.args.get('tier', 'free')
+    tier_from_referer = 'unknown'
+    
+    # Log what tier would have been detected from referer (for debugging)
+    if 'hows-my-book-doing-paid' in referer:
+        tier_from_referer = 'pro'
+    elif 'book-analyzer' in referer:
+        tier_from_referer = 'free'
+    
+    logging.info(f"🔑 Server tier: {SERVER_TIER} (detected at startup)")
+    logging.info(f"📝 Tier from args: {tier_from_args}, Tier from referer: {tier_from_referer}")
+    logging.info(f"✅ Using server tier: {tier}")
+    
+    # Get throttle parameters from PHP with better parsing
+    throttle_min_str = request.args.get('throttle_min', '0')
+    throttle_max_str = request.args.get('throttle_max', '0')
+    
+    # Parse with error handling
+    try:
+        throttle_min = float(throttle_min_str) if throttle_min_str else 0.0
+    except (ValueError, TypeError):
+        logging.error(f"Failed to parse throttle_min: {throttle_min_str}")
+        throttle_min = 0.0
+    
+    try:
+        throttle_max = float(throttle_max_str) if throttle_max_str else 0.0
+    except (ValueError, TypeError):
+        logging.error(f"Failed to parse throttle_max: {throttle_max_str}")
+        throttle_max = 0.0
+    
+    # ALWAYS use tier-based defaults based on SERVER_TIER
+    tier_defaults = {
+        'free': (0.75, 2.5),      # 0.75-2.5 seconds
+        'pro': (0.1, 0.5),       # 0.1-0.5 seconds
+        'tier1': (0.1, 0.5),     # 0.1-0.5 seconds
+        'premium': (0.1, 0.25),  # 0.1-0.25 seconds
+        'tier2': (0.1, 0.25)     # 0.1-0.25 seconds
+    }
+    
+    # Get server tier defaults
+    default_min, default_max = tier_defaults.get(tier, (0.75, 2.5))
+    
+    # If no throttle params received or they're 0, use server defaults
+    if throttle_min == 0 or throttle_max == 0:
+        logging.info(f"No valid throttle parameters received, using server tier defaults")
+        throttle_min = default_min
+        throttle_max = default_max
+    else:
+        # If throttle params were received, ensure they're not faster than server allows
+        if throttle_min < default_min:
+            logging.warning(f"Requested throttle_min {throttle_min} is faster than server allows {default_min}, using server minimum")
+            throttle_min = default_min
+        if throttle_max < default_max:
+            logging.warning(f"Requested throttle_max {throttle_max} is faster than server allows {default_max}, using server minimum")
+            throttle_max = default_max
+    
+    logging.info(f"🔧 Final throttle settings - Server Tier: {tier}, Min: {throttle_min}s, Max: {throttle_max}s")
     
     # Extract book ID
     book_id = extract_book_id(book_url)
@@ -1622,8 +2068,10 @@ def analyze_book():
             min_chapters=min_chapters
         )
         
-        # Fetch detailed data for comparison books
+        # Fetch detailed data for comparison books with tier-based throttling
         comparison_data = []
+        total_delay_applied = 0
+        delay_count = 0
         
         for i, book in enumerate(similar_books):
             if i % 10 == 0:
@@ -1633,8 +2081,30 @@ def analyze_book():
             if book_data:
                 comparison_data.append(book_data)
             
-            # Add delay to avoid rate limiting
-            time.sleep(get_random_delay())
+            # Apply tier-based throttling between book fetches (not after the last book)
+            if i < len(similar_books) - 1:  # Don't delay after the last book
+                if throttle_min > 0 and throttle_max > 0:
+                    # Random delay between min and max
+                    delay = random.uniform(throttle_min, throttle_max)
+                    logging.info(f"⏳ Applying throttle delay: {delay:.2f}s (book {i+1}/{len(similar_books)})")
+                    time.sleep(delay)
+                    total_delay_applied += delay
+                    delay_count += 1
+                else:
+                    # Fall back to original delay if no throttle params
+                    default_delay = get_random_delay()
+                    logging.info(f"⏳ Using default delay: {default_delay:.2f}s (no throttle params)")
+                    time.sleep(default_delay)
+                    total_delay_applied += default_delay
+                    delay_count += 1
+        
+        # Log total throttling impact
+        if total_delay_applied > 0:
+            avg_delay = total_delay_applied / delay_count if delay_count > 0 else 0
+            logging.info(f"⏱️ Total throttle delay applied: {total_delay_applied:.2f}s for tier '{tier}'")
+            logging.info(f"⏱️ Average delay per book: {avg_delay:.2f}s ({delay_count} delays applied)")
+        else:
+            logging.warning(f"⚠️ No throttle delays were applied! Check parameter passing.")
         
         # Calculate metrics
         metrics = calculate_percentiles(target_book, comparison_data)
@@ -1650,7 +2120,15 @@ def analyze_book():
                 'pages': target_book['pages']
             },
             'processing_time': f"{time.time() - start_time:.2f} seconds",
-            'comparison_books': comparison_data  # NEW: Include all comparison books
+            'throttle_info': {
+                'server_tier': SERVER_TIER,
+                'server_instance': os.environ.get('RENDER_SERVICE_NAME', 'unknown'),
+                'total_delay': f"{total_delay_applied:.2f} seconds",
+                'avg_delay': f"{(total_delay_applied / delay_count if delay_count > 0 else 0):.2f} seconds",
+                'delays_applied': delay_count,
+                'delay_per_book': f"{throttle_min:.2f}-{throttle_max:.2f} seconds"
+            },
+            'comparison_books': comparison_data  # Include all comparison books
         }
         
         return jsonify(response_data)
@@ -1664,9 +2142,27 @@ def analyze_book():
 @app.route('/health', methods=['GET'])
 def health_check():
     """Health check endpoint."""
+    tier_defaults = {
+        'free': (0.75, 2.5),
+        'pro': (0.1, 0.5),
+        'premium': (0.1, 0.25)
+    }
+    
+    throttle_min, throttle_max = tier_defaults.get(SERVER_TIER, (0.75, 2.5))
+    
     return jsonify({
         'status': 'healthy',
-        'time': datetime.now().isoformat()
+        'time': datetime.now().isoformat(),
+        'server_tier': SERVER_TIER,
+        'throttle_defaults': {
+            'min': throttle_min,
+            'max': throttle_max
+        },
+        'server_info': {
+            'hostname': socket.gethostname(),
+            'render_service': os.environ.get('RENDER_SERVICE_NAME', 'unknown'),
+            'render_hostname': os.environ.get('RENDER_EXTERNAL_HOSTNAME', 'unknown')
+        }
     })
 
 @app.route('/progress_stream')
