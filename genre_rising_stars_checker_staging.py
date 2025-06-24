@@ -250,10 +250,14 @@ class RoyalRoadTrendingScraper:
             response = self.session.get(trending_url, timeout=30)
             response.raise_for_status()
             
+            logging.info(f"Response status code: {response.status_code}")
+            logging.info(f"Response length: {len(response.text)} characters")
+            
             soup = BeautifulSoup(response.content, 'html.parser')
             
             # Find all book entries on the trending page
             book_elements = soup.find_all('div', class_='fiction-list-item')
+            logging.info(f"Found {len(book_elements)} book elements on the page")
             
             books = []
             processed_count = 0
@@ -263,15 +267,49 @@ class RoyalRoadTrendingScraper:
                     break
                     
                 try:
-                    # Extract book URL
-                    title_link = book_elem.find('h2', class_='fiction-title').find('a')
+                    # Log the structure we're working with
+                    logging.debug(f"Processing book element {position}")
+                    
+                    # Try different ways to find the title link
+                    title_link = None
+                    
+                    # Method 1: Look for h2 with fiction-title class
+                    h2_elem = book_elem.find('h2', class_='fiction-title')
+                    if h2_elem:
+                        logging.debug(f"Found h2 element: {h2_elem.get('class')}")
+                        title_link = h2_elem.find('a')
+                    else:
+                        logging.debug("No h2 with class 'fiction-title' found")
+                    
+                    # Method 2: Look for any h2 with an a tag
                     if not title_link:
+                        h2_elem = book_elem.find('h2')
+                        if h2_elem:
+                            title_link = h2_elem.find('a')
+                            logging.debug("Found h2 with a tag (no specific class)")
+                    
+                    # Method 3: Look for link with specific class
+                    if not title_link:
+                        title_link = book_elem.find('a', class_='font-red-sunglo')
+                        if title_link:
+                            logging.debug("Found link with class 'font-red-sunglo'")
+                    
+                    if not title_link:
+                        logging.warning(f"No title link found for position {position}")
+                        # Log what we did find
+                        all_links = book_elem.find_all('a')
+                        logging.debug(f"Found {len(all_links)} total links in this element")
+                        if all_links:
+                            logging.debug(f"First link href: {all_links[0].get('href', 'No href')}")
                         continue
                         
                     book_url = urljoin(self.base_url, title_link.get('href'))
                     book_id = self._extract_book_id(book_url)
                     
+                    logging.debug(f"Extracted URL: {book_url}, ID: {book_id}")
+                    
                     if not book_id:
+                        logging.warning(f"Could not extract book ID from URL: {book_url}")
                         continue
                     
                     # Get basic info from trending page
@@ -279,47 +317,60 @@ class RoyalRoadTrendingScraper:
                         'position': position,
                         'book_id': book_id,
                         'url': book_url,
-                        'title': title_link.get_text(strip=True),
+                        'title': title_link.get_text(strip=True) if title_link else 'Unknown',
                         'author': None,
                         'tags': [],
                         'status': 'ongoing'
                     }
                     
+                    logging.debug(f"Basic book data: {book_data}")
+                    
                     # Extract author from trending page if available
                     author_elem = book_elem.find('span', class_='author')
+                    if not author_elem:
+                        # Try alternative selectors
+                        author_elem = book_elem.find('a', href=re.compile(r'/user/'))
                     if author_elem:
                         book_data['author'] = author_elem.get_text(strip=True)
+                        logging.debug(f"Found author: {book_data['author']}")
                     
                     # Extract basic stats from trending page if available
                     stats_elem = book_elem.find('div', class_='stats')
                     if stats_elem:
+                        logging.debug("Found stats element")
                         # Look for follower count, views, etc.
-                        stat_spans = stats_elem.find_all('span')
-                        for span in stat_spans:
-                            text = span.get_text(strip=True).lower()
-                            if 'follower' in text:
-                                try:
-                                    book_data['followers'] = int(text.split()[0].replace(',', ''))
-                                except (ValueError, IndexError):
-                                    pass
+                        stat_text = stats_elem.get_text()
+                        logging.debug(f"Stats text: {stat_text[:100]}...")  # First 100 chars
+                        
+                        # Try to extract followers
+                        follower_match = re.search(r'([\d,]+)\s*Followers?', stat_text, re.IGNORECASE)
+                        if follower_match:
+                            book_data['followers'] = int(follower_match.group(1).replace(',', ''))
+                            logging.debug(f"Extracted followers: {book_data['followers']}")
                     
                     # Get comprehensive data from individual book page
+                    logging.info(f"Fetching detailed data for book: {book_data['title']} (ID: {book_id})")
                     comprehensive_data = self._scrape_book_basic_data(book_url)
                     if comprehensive_data:
                         # Merge comprehensive data, keeping position from trending page
                         comprehensive_data['position'] = position
                         book_data = comprehensive_data
+                        logging.debug(f"Got comprehensive data with {len(comprehensive_data)} fields")
+                    else:
+                        logging.warning(f"Failed to get comprehensive data for book ID {book_id}")
                     
                     books.append(book_data)
                     processed_count += 1
                     
-                    logging.info(f"Processed book {position}: {book_data.get('title', 'Unknown')}")
+                    logging.info(f"Processed book {position}: {book_data.get('title', 'Unknown')} (ID: {book_data.get('book_id', 'N/A')})")
                     
                     # Add delay between books to be respectful
-                    self._random_delay(0.5, 1.5)
+                    delay = self._random_delay(0.5, 1.5)
+                    logging.debug(f"Sleeping for {delay:.2f} seconds")
                     
                 except Exception as e:
                     logging.error(f"Error processing book at position {position}: {str(e)}")
+                    logging.exception("Full traceback:")
                     continue
             
             result = {
@@ -337,6 +388,7 @@ class RoyalRoadTrendingScraper:
             
         except Exception as e:
             logging.error(f"Error scraping trending page {trending_url}: {str(e)}")
+            logging.exception("Full traceback:")
             return {
                 'success': False,
                 'error': str(e),
