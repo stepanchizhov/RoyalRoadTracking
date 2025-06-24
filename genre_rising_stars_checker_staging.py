@@ -394,30 +394,6 @@ def scrape_trending_page_endpoint():
             'timestamp': datetime.now().isoformat()
         }, 500
 
-# Example usage function
-def test_trending_scraper():
-    """Test the trending scraper with main trending page"""
-    scraper = RoyalRoadTrendingScraper()
-    
-    # Test main trending
-    main_trending_url = "https://www.royalroad.com/fictions/trending"
-    result = scraper.scrape_trending_page(main_trending_url, "main", 10)
-    
-    print(f"Scraping result: {result['success']}")
-    print(f"Books found: {len(result['books'])}")
-    
-    if result['books']:
-        print("\nFirst few books:")
-        for book in result['books'][:3]:
-            print(f"  {book['position']}. {book['title']} by {book['author']}")
-            print(f"     Followers: {book.get('followers', 'N/A')}")
-    
-    return result
-
-if __name__ == "__main__":
-    # Test the scraper
-    test_result = test_trending_scraper()
-
 
 def get_dynamic_spread(step, total_pages):
     """Returns a spread as a percentage of total pages."""
