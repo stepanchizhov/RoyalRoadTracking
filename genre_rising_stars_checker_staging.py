@@ -15,6 +15,7 @@ import requests
 import json
 from urllib.parse import urljoin, urlparse
 import hashlib
+from trending_scraper import RoyalRoadTrendingScraper
 
 # Enhanced logging
 logging.basicConfig(
@@ -1620,6 +1621,142 @@ def calculate_percentiles(target_stats, comparison_stats):
             }
     
     return metrics
+
+@app.route('/scrape_trending_page', methods=['POST'])
+def scrape_trending_page():
+    """
+    Endpoint for scraping Royal Road trending pages
+    
+    Expected JSON payload:
+    {
+        "trending_url": "https://www.royalroad.com/fictions/trending",
+        "trending_type": "main",  # or genre name
+        "limit": 50
+    }
+    """
+    try:
+        data = request.get_json()
+        
+        if not data or 'trending_url' not in data:
+            return jsonify({
+                'success': False,
+                'error': 'trending_url is required'
+            }), 400
+        
+        trending_url = data['trending_url']
+        trending_type = data.get('trending_type', 'main')
+        limit = min(int(data.get('limit', 50)), 50)  # Cap at 50
+        
+        # Initialize scraper
+        scraper = RoyalRoadTrendingScraper()
+        
+        # Perform the scraping
+        result = scraper.scrape_trending_page(trending_url, trending_type, limit)
+        
+        return jsonify(result), 200 if result['success'] else 500
+        
+    except Exception as e:
+        return jsonify({
+            'success': False,
+            'error': str(e),
+            'timestamp': datetime.now().isoformat()
+        }), 500
+
+
+# For FastAPI:
+"""
+class TrendingPageRequest(BaseModel):
+    trending_url: str
+    trending_type: str = 'main'
+    limit: int = 50
+
+@app.post('/scrape_trending_page')
+async def scrape_trending_page(request: TrendingPageRequest):
+    try:
+        # Cap limit at 50
+        limit = min(request.limit, 50)
+        
+        # Initialize scraper
+        scraper = RoyalRoadTrendingScraper()
+        
+        # Perform the scraping
+        result = scraper.scrape_trending_page(
+            request.trending_url, 
+            request.trending_type, 
+            limit
+        )
+        
+        if not result['success']:
+            raise HTTPException(status_code=500, detail=result.get('error', 'Unknown error'))
+            
+        return result
+        
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+"""
+
+# Additional helper endpoint to get trending page URLs
+@app.route('/get_trending_urls', methods=['GET'])
+def get_trending_urls():
+    """
+    Helper endpoint to get all trending page URLs
+    """
+    base_url = "https://www.royalroad.com/fictions/trending"
+    
+    genres = [
+        'action', 'adventure', 'comedy', 'contemporary', 'drama', 'fantasy', 
+        'historical', 'horror', 'mystery', 'psychological', 'romance', 'satire', 
+        'sci_fi', 'tragedy', 'anti_hero_lead', 'artificial_intelligence', 
+        'attractive_lead', 'cyberpunk', 'dungeon', 'dystopia', 'female_lead', 
+        'first_contact', 'gamelit', 'gender_bender', 'genetically_engineered', 
+        'grimdark', 'hard_sci_fi', 'harem', 'high_fantasy', 'litrpg', 
+        'low_fantasy', 'magic', 'male_lead', 'martial_arts', 'multiple_lead', 
+        'mythos', 'non_human_lead', 'summoned_hero', 'portal_fantasy', 
+        'post_apocalyptic', 'progression', 'reader_interactive', 'reincarnation', 
+        'ruling_class', 'school_life', 'secret_identity', 'slice_of_life', 
+        'soft_sci_fi', 'space_opera', 'sports', 'steampunk', 'strategy', 
+        'strong_lead', 'super_heroes', 'supernatural', 'technologically_engineered', 
+        'time_loop', 'time_travel', 'urban_fantasy', 'villainous_lead', 
+        'virtual_reality', 'war_and_military', 'wuxia', 'xianxia'
+    ]
+    
+    urls = {
+        'main': base_url,
+        **{genre: f"{base_url}?genre={genre}" for genre in genres}
+    }
+    
+    return jsonify({
+        'success': True,
+        'urls': urls,
+        'total': len(urls)
+    })
+
+# Health check endpoint for trending scraper
+@app.route('/trending_scraper_health', methods=['GET'])
+def trending_scraper_health():
+    """
+    Health check endpoint for the trending scraper service
+    """
+    try:
+        scraper = RoyalRoadTrendingScraper()
+        
+        # Test a simple request to main page
+        test_url = "https://www.royalroad.com/fictions/trending"
+        response = scraper.session.head(test_url, timeout=5)
+        
+        return jsonify({
+            'status': 'healthy',
+            'service': 'trending_scraper',
+            'royalroad_accessible': response.status_code == 200,
+            'timestamp': datetime.now().isoformat()
+        })
+    except Exception as e:
+        return jsonify({
+            'status': 'unhealthy',
+            'service': 'trending_scraper',
+            'error': str(e),
+            'timestamp': datetime.now().isoformat()
+        }), 503
 
 @app.route('/check_rising_stars', methods=['GET'])
 def api_rising_stars():
