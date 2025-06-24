@@ -15,7 +15,6 @@ import requests
 import json
 from urllib.parse import urljoin, urlparse
 import hashlib
-from trending_scraper import RoyalRoadTrendingScraper
 
 # Enhanced logging
 logging.basicConfig(
