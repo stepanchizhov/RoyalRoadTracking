@@ -94,7 +94,7 @@ GENRE_RISING_STARS_URL = "https://www.royalroad.com/fictions/rising-stars?genre=
 class RoyalRoadTrendingScraper:
     """Scraper for Royal Road trending pages"""
     
-    def __init__(self, base_delay=1.0, max_delay=3.0):
+    def __init__(self, base_delay=0.75, max_delay=1.5):
         self.base_url = "https://www.royalroad.com"
         self.base_delay = base_delay
         self.max_delay = max_delay
@@ -120,45 +120,45 @@ class RoyalRoadTrendingScraper:
                 return None
         return None
         
-def _scrape_book_basic_data(self, book_url):
-    """Get basic book data from its page"""
-    try:
-        self._random_delay(0.5, 1.5)  # Shorter delay for individual book pages
-        
-        # Use cloudscraper like in fetch_with_retries
-        scraper = get_scraper()
-        headers = {
-            "User-Agent": random.choice(USER_AGENTS),
-            "Accept": "text/html,application/xhtml+xml,application/xml",
-            "Accept-Language": "en-US,en;q=0.9",
-        }
-        
-        response = scraper.get(book_url, headers=headers, timeout=30)
-        response.raise_for_status()
-        
-        soup = BeautifulSoup(response.text, 'html.parser')
-        
-        # Use the existing parse_book_stats function
-        book_data = parse_book_stats(soup)
-        
-        # Add the book_id and url
-        book_data['book_id'] = self._extract_book_id(book_url)
-        book_data['url'] = book_url
-        
-        # Rename 'genres' to 'tags' for consistency with the rest of the scraper
-        book_data['tags'] = book_data.get('genres', [])
-        
-        # Map some fields to match expected format
-        book_data['total_views'] = book_data.get('views', 0)
-        
-        logging.debug(f"Scraped book data: Title={book_data.get('title')}, Followers={book_data.get('followers')}")
-        
-        return book_data
-        
-    except Exception as e:
-        logging.error(f"Error scraping book data from {book_url}: {str(e)}")
-        logging.exception("Full traceback:")
-        return None
+    def _scrape_book_basic_data(self, book_url):
+        """Get basic book data from its page"""
+        try:
+            self._random_delay(0.25, 1.0)  # Shorter delay for individual book pages
+            
+            # Use cloudscraper like in fetch_with_retries
+            scraper = get_scraper()
+            headers = {
+                "User-Agent": random.choice(USER_AGENTS),
+                "Accept": "text/html,application/xhtml+xml,application/xml",
+                "Accept-Language": "en-US,en;q=0.9",
+            }
+            
+            response = scraper.get(book_url, headers=headers, timeout=30)
+            response.raise_for_status()
+            
+            soup = BeautifulSoup(response.text, 'html.parser')
+            
+            # Use the existing parse_book_stats function
+            book_data = parse_book_stats(soup)
+            
+            # Add the book_id and url
+            book_data['book_id'] = self._extract_book_id(book_url)
+            book_data['url'] = book_url
+            
+            # Rename 'genres' to 'tags' for consistency with the rest of the scraper
+            book_data['tags'] = book_data.get('genres', [])
+            
+            # Map some fields to match expected format
+            book_data['total_views'] = book_data.get('views', 0)
+            
+            logging.debug(f"Scraped book data: Title={book_data.get('title')}, Followers={book_data.get('followers')}")
+            
+            return book_data
+            
+        except Exception as e:
+            logging.error(f"Error scraping book data from {book_url}: {str(e)}")
+            logging.exception("Full traceback:")
+            return None
     
     def scrape_trending_page(self, trending_url, trending_type="main", limit=50):
         """
