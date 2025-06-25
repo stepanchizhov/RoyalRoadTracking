@@ -120,45 +120,80 @@ class RoyalRoadTrendingScraper:
                 return None
         return None
         
-    def _scrape_book_basic_data(self, book_url):
-        """Get basic book data from its page"""
-        try:
-            self._random_delay(0.25, 1.0)  # Shorter delay for individual book pages
-            
-            # Use cloudscraper like in fetch_with_retries
-            scraper = get_scraper()
-            headers = {
-                "User-Agent": random.choice(USER_AGENTS),
-                "Accept": "text/html,application/xhtml+xml,application/xml",
-                "Accept-Language": "en-US,en;q=0.9",
-            }
-            
-            response = scraper.get(book_url, headers=headers, timeout=30)
-            response.raise_for_status()
-            
-            soup = BeautifulSoup(response.text, 'html.parser')
-            
-            # Use the existing parse_book_stats function
-            book_data = parse_book_stats(soup)
-            
-            # Add the book_id and url
-            book_data['book_id'] = self._extract_book_id(book_url)
-            book_data['url'] = book_url
-            
-            # Rename 'genres' to 'tags' for consistency with the rest of the scraper
-            book_data['tags'] = book_data.get('genres', [])
-            
-            # Map some fields to match expected format
-            book_data['total_views'] = book_data.get('views', 0)
-            
-            logging.debug(f"Scraped book data: Title={book_data.get('title')}, Followers={book_data.get('followers')}")
-            
-            return book_data
-            
-        except Exception as e:
-            logging.error(f"Error scraping book data from {book_url}: {str(e)}")
-            logging.exception("Full traceback:")
-            return None
+def _scrape_book_basic_data(self, book_url):
+    """Get basic book data from its page with enhanced validation"""
+    try:
+        self._random_delay(0.25, 1.0)
+        
+        scraper = get_scraper()
+        headers = {
+            "User-Agent": random.choice(USER_AGENTS),
+            "Accept": "text/html,application/xhtml+xml,application/xml",
+            "Accept-Language": "en-US,en;q=0.9",
+        }
+        
+        response = scraper.get(book_url, headers=headers, timeout=30)
+        response.raise_for_status()
+        
+        soup = BeautifulSoup(response.text, 'html.parser')
+        book_data = parse_book_stats(soup)
+        
+        # Enhanced data processing
+        book_data['book_id'] = self._extract_book_id(book_url)
+        book_data['url'] = book_url
+        book_data['tags'] = book_data.get('genres', [])
+        book_data['total_views'] = book_data.get('views', 0)
+        
+        # Data validation and cleanup
+        self._validate_and_clean_book_data(book_data)
+        
+        logging.debug(f"Scraped book data: Title={book_data.get('title')}, Followers={book_data.get('followers')}")
+        
+        return book_data
+        
+    except Exception as e:
+        logging.error(f"Error scraping book data from {book_url}: {str(e)}")
+        logging.exception("Full traceback:")
+        return None
+
+def _validate_and_clean_book_data(self, book_data):
+    """Validate and clean book data"""
+    # Ensure numeric fields are properly typed
+    numeric_fields = ['followers', 'favorites', 'views', 'total_views', 'ratings', 
+                     'pages', 'chapters', 'comments', 'review_count', 'word_count']
+    
+    for field in numeric_fields:
+        if field in book_data:
+            try:
+                book_data[field] = int(book_data[field]) if book_data[field] is not None else 0
+            except (ValueError, TypeError):
+                book_data[field] = 0
+    
+    # Ensure rating scores are properly typed
+    rating_fields = ['rating_score', 'style_score', 'story_score', 'grammar_score', 'character_score']
+    
+    for field in rating_fields:
+        if field in book_data and book_data[field] is not None:
+            try:
+                book_data[field] = float(book_data[field])
+            except (ValueError, TypeError):
+                book_data[field] = None
+    
+    # Ensure lists are properly formatted
+    list_fields = ['tags', 'genres', 'warning_tags']
+    for field in list_fields:
+        if field not in book_data or book_data[field] is None:
+            book_data[field] = []
+        elif not isinstance(book_data[field], list):
+            book_data[field] = []
+    
+    # Ensure string fields are properly typed
+    string_fields = ['title', 'author', 'status', 'url']
+    for field in string_fields:
+        if field in book_data and book_data[field] is not None:
+            book_data[field] = str(book_data[field]).strip()
+        elif field in book_data:
+            book_data[field] = 'Unknown' if field in ['title', 'author'] else ''
     
     def scrape_trending_page(self, trending_url, trending_type="main", limit=50):
         """
@@ -1606,8 +1641,13 @@ def scrape_trending_page():
         # Initialize scraper
         scraper = RoyalRoadTrendingScraper()
         
-        # Perform the scraping
+        # Track duration
+        start_time = time.time()
         result = scraper.scrape_trending_page(trending_url, trending_type, limit)
+        end_time = time.time()
+        
+        # Add duration to result
+        result['scrape_duration'] = round(end_time - start_time, 2)
         
         return jsonify(result), 200 if result['success'] else 500
         
