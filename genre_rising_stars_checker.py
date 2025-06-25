@@ -11,6 +11,10 @@ from datetime import datetime
 import threading
 import os
 import socket
+import requests
+import json
+from urllib.parse import urljoin, urlparse
+import hashlib
 
 # Enhanced logging
 logging.basicConfig(
@@ -84,6 +88,330 @@ BASE_URL = "https://www.royalroad.com"
 SEARCH_URL = f"{BASE_URL}/fictions/search"
 MAIN_RISING_STARS_URL = "https://www.royalroad.com/fictions/rising-stars"
 GENRE_RISING_STARS_URL = "https://www.royalroad.com/fictions/rising-stars?genre="
+
+
+
+class RoyalRoadTrendingScraper:
+    """Scraper for Royal Road trending pages"""
+    
+    def __init__(self, base_delay=0.75, max_delay=1.5):
+        self.base_url = "https://www.royalroad.com"
+        self.base_delay = base_delay
+        self.max_delay = max_delay
+        self.session = requests.Session()
+        self.session.headers.update({
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'
+        })
+        
+    def _random_delay(self, min_delay=None, max_delay=None):
+        """Add random delay between requests"""
+        min_d = min_delay or self.base_delay
+        max_d = max_delay or self.max_delay
+        delay = random.uniform(min_d, max_d)
+        time.sleep(delay)
+        return delay
+        
+    def _extract_book_id(self, url):
+        """Extract book ID from Royal Road URL"""
+        if '/fiction/' in url:
+            try:
+                return int(url.split('/fiction/')[1].split('/')[0])
+            except (IndexError, ValueError):
+                return None
+        return None
+        
+    def _scrape_book_basic_data(self, book_url):
+        """Get basic book data from its page with enhanced validation"""
+        try:
+            self._random_delay(0.25, 1.0)
+            
+            scraper = get_scraper()
+            headers = {
+                "User-Agent": random.choice(USER_AGENTS),
+                "Accept": "text/html,application/xhtml+xml,application/xml",
+                "Accept-Language": "en-US,en;q=0.9",
+            }
+            
+            response = scraper.get(book_url, headers=headers, timeout=30)
+            response.raise_for_status()
+            
+            soup = BeautifulSoup(response.text, 'html.parser')
+            book_data = parse_book_stats(soup)
+            
+            # Enhanced data processing
+            book_data['book_id'] = self._extract_book_id(book_url)
+            book_data['url'] = book_url
+            book_data['tags'] = book_data.get('genres', [])
+            book_data['total_views'] = book_data.get('views', 0)
+            
+            # Data validation and cleanup
+            self._validate_and_clean_book_data(book_data)
+            
+            logging.debug(f"Scraped book data: Title={book_data.get('title')}, Followers={book_data.get('followers')}")
+            
+            return book_data
+            
+        except Exception as e:
+            logging.error(f"Error scraping book data from {book_url}: {str(e)}")
+            logging.exception("Full traceback:")
+            return None
+
+    def _validate_and_clean_book_data(self, book_data):
+        """Validate and clean book data"""
+        # Ensure numeric fields are properly typed
+        numeric_fields = ['followers', 'favorites', 'views', 'total_views', 'ratings', 
+                         'pages', 'chapters', 'comments', 'review_count', 'word_count']
+        
+        for field in numeric_fields:
+            if field in book_data:
+                try:
+                    book_data[field] = int(book_data[field]) if book_data[field] is not None else 0
+                except (ValueError, TypeError):
+                    book_data[field] = 0
+        
+        # Ensure rating scores are properly typed
+        rating_fields = ['rating_score', 'style_score', 'story_score', 'grammar_score', 'character_score']
+        
+        for field in rating_fields:
+            if field in book_data and book_data[field] is not None:
+                try:
+                    book_data[field] = float(book_data[field])
+                except (ValueError, TypeError):
+                    book_data[field] = None
+        
+        # Ensure lists are properly formatted
+        list_fields = ['tags', 'genres', 'warning_tags']
+        for field in list_fields:
+            if field not in book_data or book_data[field] is None:
+                book_data[field] = []
+            elif not isinstance(book_data[field], list):
+                book_data[field] = []
+        
+        # Ensure string fields are properly typed
+        string_fields = ['title', 'author', 'status', 'url']
+        for field in string_fields:
+            if field in book_data and book_data[field] is not None:
+                book_data[field] = str(book_data[field]).strip()
+            elif field in book_data:
+                book_data[field] = 'Unknown' if field in ['title', 'author'] else ''
+    
+    def scrape_trending_page(self, trending_url, trending_type="main", limit=50):
+        """
+        Scrape a trending page and return book data
+        
+        Args:
+            trending_url: URL of the trending page
+            trending_type: Type of trending list (main, genre name, etc.)
+            limit: Maximum number of books to scrape (default 50)
+            
+        Returns:
+            dict: Contains books list and metadata
+        """
+        try:
+            logging.info(f"Scraping trending page: {trending_url}")
+            
+            # Get the trending page
+            response = self.session.get(trending_url, timeout=30)
+            response.raise_for_status()
+            
+            logging.info(f"Response status code: {response.status_code}")
+            logging.info(f"Response length: {len(response.text)} characters")
+            
+            soup = BeautifulSoup(response.content, 'html.parser')
+            
+            # Find all book entries on the trending page
+            book_elements = soup.find_all('div', class_='fiction-list-item')
+            logging.info(f"Found {len(book_elements)} book elements on the page")
+            
+            books = []
+            processed_count = 0
+            
+            for position, book_elem in enumerate(book_elements, 1):
+                if processed_count >= limit:
+                    break
+                    
+                try:
+                    # Log the structure we're working with
+                    logging.debug(f"Processing book element {position}")
+                    
+                    # Try different ways to find the title link
+                    title_link = None
+                    
+                    # Method 1: Look for h2 with fiction-title class
+                    h2_elem = book_elem.find('h2', class_='fiction-title')
+                    if h2_elem:
+                        logging.debug(f"Found h2 element: {h2_elem.get('class')}")
+                        title_link = h2_elem.find('a')
+                    else:
+                        logging.debug("No h2 with class 'fiction-title' found")
+                    
+                    # Method 2: Look for any h2 with an a tag
+                    if not title_link:
+                        h2_elem = book_elem.find('h2')
+                        if h2_elem:
+                            title_link = h2_elem.find('a')
+                            logging.debug("Found h2 with a tag (no specific class)")
+                    
+                    # Method 3: Look for link with specific class
+                    if not title_link:
+                        title_link = book_elem.find('a', class_='font-red-sunglo')
+                        if title_link:
+                            logging.debug("Found link with class 'font-red-sunglo'")
+                    
+                    if not title_link:
+                        logging.warning(f"No title link found for position {position}")
+                        # Log what we did find
+                        all_links = book_elem.find_all('a')
+                        logging.debug(f"Found {len(all_links)} total links in this element")
+                        if all_links:
+                            logging.debug(f"First link href: {all_links[0].get('href', 'No href')}")
+                        continue
+                        
+                    book_url = urljoin(self.base_url, title_link.get('href'))
+                    book_id = self._extract_book_id(book_url)
+                    
+                    logging.debug(f"Extracted URL: {book_url}, ID: {book_id}")
+                    
+                    if not book_id:
+                        logging.warning(f"Could not extract book ID from URL: {book_url}")
+                        continue
+                    
+                    # Get basic info from trending page
+                    book_data = {
+                        'position': position,
+                        'book_id': book_id,
+                        'url': book_url,
+                        'title': title_link.get_text(strip=True) if title_link else 'Unknown',
+                        'author': None,
+                        'tags': [],
+                        'status': 'ongoing'
+                    }
+                    
+                    logging.debug(f"Basic book data: {book_data}")
+                    
+                    # Extract author from trending page if available
+                    author_elem = book_elem.find('span', class_='author')
+                    if not author_elem:
+                        # Try alternative selectors
+                        author_elem = book_elem.find('a', href=re.compile(r'/user/'))
+                    if author_elem:
+                        book_data['author'] = author_elem.get_text(strip=True)
+                        logging.debug(f"Found author: {book_data['author']}")
+                    
+                    # Extract basic stats from trending page if available
+                    stats_elem = book_elem.find('div', class_='stats')
+                    if stats_elem:
+                        logging.debug("Found stats element")
+                        # Look for follower count, views, etc.
+                        stat_text = stats_elem.get_text()
+                        logging.debug(f"Stats text: {stat_text[:100]}...")  # First 100 chars
+                        
+                        # Try to extract followers
+                        follower_match = re.search(r'([\d,]+)\s*Followers?', stat_text, re.IGNORECASE)
+                        if follower_match:
+                            book_data['followers'] = int(follower_match.group(1).replace(',', ''))
+                            logging.debug(f"Extracted followers: {book_data['followers']}")
+                    
+                    # Get comprehensive data from individual book page
+                    logging.info(f"Fetching detailed data for book: {book_data['title']} (ID: {book_id})")
+                    comprehensive_data = self._scrape_book_basic_data(book_url)
+                    if comprehensive_data:
+                        # Merge comprehensive data, keeping position from trending page
+                        comprehensive_data['position'] = position
+                        book_data = comprehensive_data
+                        logging.debug(f"Got comprehensive data with {len(comprehensive_data)} fields")
+                    else:
+                        logging.warning(f"Failed to get comprehensive data for book ID {book_id}")
+                    
+                    books.append(book_data)
+                    processed_count += 1
+                    
+                    logging.info(f"Processed book {position}: {book_data.get('title', 'Unknown')} (ID: {book_data.get('book_id', 'N/A')})")
+                    
+                    # Add delay between books to be respectful
+                    delay = self._random_delay(0.5, 1.5)
+                    logging.debug(f"Sleeping for {delay:.2f} seconds")
+                    
+                except Exception as e:
+                    logging.error(f"Error processing book at position {position}: {str(e)}")
+                    logging.exception("Full traceback:")
+                    continue
+            
+            result = {
+                'success': True,
+                'trending_type': trending_type,
+                'trending_url': trending_url,
+                'books': books,
+                'total_found': len(books),
+                'timestamp': datetime.now().isoformat(),
+                'scrape_duration': None  # Will be calculated by caller
+            }
+            
+            logging.info(f"Successfully scraped {len(books)} books from {trending_type} trending")
+            return result
+            
+        except Exception as e:
+            logging.error(f"Error scraping trending page {trending_url}: {str(e)}")
+            logging.exception("Full traceback:")
+            return {
+                'success': False,
+                'error': str(e),
+                'trending_type': trending_type,
+                'trending_url': trending_url,
+                'books': [],
+                'timestamp': datetime.now().isoformat()
+            }
+    
+
+
+# Flask/FastAPI endpoint (add to your existing API)
+def scrape_trending_page_endpoint():
+    """
+    API endpoint for trending page scraping
+    
+    Expected parameters:
+    - trending_url: URL of the trending page to scrape
+    - trending_type: Type of trending (main, genre name)
+    - limit: Maximum number of books (default 50)
+    """
+    try:
+        # Get parameters (adjust based on your framework - Flask/FastAPI)
+        data = request.get_json() if hasattr(request, 'get_json') else request.json
+        
+        trending_url = data.get('trending_url')
+        trending_type = data.get('trending_type', 'main')
+        limit = min(int(data.get('limit', 50)), 50)  # Cap at 50 for safety
+        
+        if not trending_url:
+            return {
+                'success': False,
+                'error': 'trending_url parameter is required'
+            }, 400
+        
+        # Initialize scraper
+        scraper = RoyalRoadTrendingScraper()
+        
+        # Scrape the trending page
+        start_time = time.time()
+        result = scraper.scrape_trending_page(trending_url, trending_type, limit)
+        end_time = time.time()
+        
+        # Add duration to result
+        result['scrape_duration'] = round(end_time - start_time, 2)
+        
+        if result['success']:
+            return result, 200
+        else:
+            return result, 500
+            
+    except Exception as e:
+        logging.error(f"Error in trending scraper endpoint: {str(e)}")
+        return {
+            'success': False,
+            'error': f'Internal server error: {str(e)}',
+            'timestamp': datetime.now().isoformat()
+        }, 500
+
 
 def get_dynamic_spread(step, total_pages):
     """Returns a spread as a percentage of total pages."""
@@ -1286,6 +1614,147 @@ def calculate_percentiles(target_stats, comparison_stats):
             }
     
     return metrics
+
+@app.route('/scrape_trending_page', methods=['POST'])
+def scrape_trending_page():
+    """
+    Endpoint for scraping Royal Road trending pages
+    
+    Expected JSON payload:
+    {
+        "trending_url": "https://www.royalroad.com/fictions/trending",
+        "trending_type": "main",  # or genre name
+        "limit": 50
+    }
+    """
+    try:
+        data = request.get_json()
+        
+        if not data or 'trending_url' not in data:
+            return jsonify({
+                'success': False,
+                'error': 'trending_url is required'
+            }), 400
+        
+        trending_url = data['trending_url']
+        trending_type = data.get('trending_type', 'main')
+        limit = min(int(data.get('limit', 50)), 50)  # Cap at 50
+        
+        # Initialize scraper
+        scraper = RoyalRoadTrendingScraper()
+        
+        # Track duration
+        start_time = time.time()
+        result = scraper.scrape_trending_page(trending_url, trending_type, limit)
+        end_time = time.time()
+        
+        # Add duration to result
+        result['scrape_duration'] = round(end_time - start_time, 2)
+        
+        return jsonify(result), 200 if result['success'] else 500
+        
+    except Exception as e:
+        return jsonify({
+            'success': False,
+            'error': str(e),
+            'timestamp': datetime.now().isoformat()
+        }), 500
+
+
+# For FastAPI:
+"""
+class TrendingPageRequest(BaseModel):
+    trending_url: str
+    trending_type: str = 'main'
+    limit: int = 50
+
+@app.post('/scrape_trending_page')
+async def scrape_trending_page(request: TrendingPageRequest):
+    try:
+        # Cap limit at 50
+        limit = min(request.limit, 50)
+        
+        # Initialize scraper
+        scraper = RoyalRoadTrendingScraper()
+        
+        # Perform the scraping
+        result = scraper.scrape_trending_page(
+            request.trending_url, 
+            request.trending_type, 
+            limit
+        )
+        
+        if not result['success']:
+            raise HTTPException(status_code=500, detail=result.get('error', 'Unknown error'))
+            
+        return result
+        
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+"""
+
+# Additional helper endpoint to get trending page URLs
+@app.route('/get_trending_urls', methods=['GET'])
+def get_trending_urls():
+    """
+    Helper endpoint to get all trending page URLs
+    """
+    base_url = "https://www.royalroad.com/fictions/trending"
+    
+    genres = [
+        'action', 'adventure', 'comedy', 'contemporary', 'drama', 'fantasy', 
+        'historical', 'horror', 'mystery', 'psychological', 'romance', 'satire', 
+        'sci_fi', 'tragedy', 'anti_hero_lead', 'artificial_intelligence', 
+        'attractive_lead', 'cyberpunk', 'dungeon', 'dystopia', 'female_lead', 
+        'first_contact', 'gamelit', 'gender_bender', 'genetically_engineered', 
+        'grimdark', 'hard_sci_fi', 'harem', 'high_fantasy', 'litrpg', 
+        'low_fantasy', 'magic', 'male_lead', 'martial_arts', 'multiple_lead', 
+        'mythos', 'non_human_lead', 'summoned_hero', 'portal_fantasy', 
+        'post_apocalyptic', 'progression', 'reader_interactive', 'reincarnation', 
+        'ruling_class', 'school_life', 'secret_identity', 'slice_of_life', 
+        'soft_sci_fi', 'space_opera', 'sports', 'steampunk', 'strategy', 
+        'strong_lead', 'super_heroes', 'supernatural', 'technologically_engineered', 
+        'time_loop', 'time_travel', 'urban_fantasy', 'villainous_lead', 
+        'virtual_reality', 'war_and_military', 'wuxia', 'xianxia'
+    ]
+    
+    urls = {
+        'main': base_url,
+        **{genre: f"{base_url}?genre={genre}" for genre in genres}
+    }
+    
+    return jsonify({
+        'success': True,
+        'urls': urls,
+        'total': len(urls)
+    })
+
+# Health check endpoint for trending scraper
+@app.route('/trending_scraper_health', methods=['GET'])
+def trending_scraper_health():
+    """
+    Health check endpoint for the trending scraper service
+    """
+    try:
+        scraper = RoyalRoadTrendingScraper()
+        
+        # Test a simple request to main page
+        test_url = "https://www.royalroad.com/fictions/trending"
+        response = scraper.session.head(test_url, timeout=5)
+        
+        return jsonify({
+            'status': 'healthy',
+            'service': 'trending_scraper',
+            'royalroad_accessible': response.status_code == 200,
+            'timestamp': datetime.now().isoformat()
+        })
+    except Exception as e:
+        return jsonify({
+            'status': 'unhealthy',
+            'service': 'trending_scraper',
+            'error': str(e),
+            'timestamp': datetime.now().isoformat()
+        }), 503
 
 @app.route('/check_rising_stars', methods=['GET'])
 def api_rising_stars():
