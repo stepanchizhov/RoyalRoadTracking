@@ -1715,7 +1715,9 @@ def get_trending_urls():
         'soft_sci_fi', 'space_opera', 'sports', 'steampunk', 'strategy', 
         'strong_lead', 'super_heroes', 'supernatural', 'technologically_engineered', 
         'time_loop', 'time_travel', 'urban_fantasy', 'villainous_lead', 
-        'virtual_reality', 'war_and_military', 'wuxia', 'xianxia'
+        'virtual_reality', 'war_and_military', 'wuxia', 'xianxia',
+        'ai_assisted', 'ai_generated', 'graphic_violence',
+        'profanity', 'sensitive', 'sexuality'
     ]
     
     urls = {
@@ -2186,7 +2188,13 @@ def analyze_book():
                 'Attractive Lead': 'attractive_lead',
                 'Gender Bender': 'gender_bender',
                 'Reader Interactive': 'reader_interactive',
-                'Secret Identity': 'secret_identity'
+                'Secret Identity': 'secret_identity',
+                'AI-Assisted Content': 'ai_assisted',
+    			'AI-Generated Content': 'ai_generated',
+    			'Graphic Violence': 'graphic_violence',
+    			'Profanity': 'profanity',
+    			'Sensitive Content': 'sensitive',
+    			'Sexual Content': 'sexuality'
             }
             
             genres = []
