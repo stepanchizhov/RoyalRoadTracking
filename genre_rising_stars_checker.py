@@ -1097,7 +1097,7 @@ def parse_rising_stars_book_data(book_element):
         status_labels = book_element.find_all("span", class_="label")
         for label in status_labels:
             label_text = label.text.strip().upper()
-            if label_text in ["ONGOING", "COMPLETED", "HIATUS", "DROPPED", "STUB"]:
+            if label_text in ["ONGOING", "COMPLETED", "HIATUS", "DROPPED", "STUB", "INACTIVE"]:
                 book_data['status'] = label_text.lower()
                 break
         else:
@@ -1215,8 +1215,12 @@ def parse_book_stats(soup):
             stats['status'] = 'completed'
         elif "HIATUS" in status_text:
             stats['status'] = 'hiatus'
-        elif "DROPPED" in status_text or "STUB" in status_text:
+        elif "DROPPED" in status_text:
             stats['status'] = 'dropped'
+        elif "STUB" in status_text:
+            stats['status'] = 'stub'
+        elif "INACTIVE" in status_text:
+            stats['status'] = 'inactive'
         else:
             stats['status'] = 'ongoing'
     
