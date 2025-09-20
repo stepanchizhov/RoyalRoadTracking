@@ -22,6 +22,9 @@ logging.basicConfig(
     format="%(asctime)s - [%(threadName)s] - %(levelname)s - %(message)s"
 )
 
+USE_DATABASE = os.environ.get('USE_DATABASE', 'true').lower() == 'true'
+WP_API_BASE = os.environ.get('WP_API_BASE', 'https://stepan.chizhov.com')
+
 # Detect which Render instance we're on
 def get_server_tier():
     """Detect server tier based on hostname or environment"""
@@ -999,6 +1002,37 @@ def estimate_distance_to_main_rs(book_id, genre_results, tags, headers):
         logging.exception(f"❌ Error estimating distance to main Rising Stars: {str(e)}")
         return {"error": f"Error estimating distance: {str(e)}"}
 
+def check_rising_stars_from_wordpress(book_url, estimate_distance=False):
+    """Check Rising Stars using WordPress database API"""
+    try:
+        # Call WordPress REST API endpoint
+        api_url = f"{WP_API_BASE}/wp-json/rr-analytics/v1/check-rising-stars"
+        
+        payload = {
+            'book_url': book_url,
+            'estimate_distance': estimate_distance,
+            'use_database': True  # Force database usage
+        }
+        
+        headers = {
+            'X-WP-Nonce': os.environ.get('WP_NONCE', ''),
+            'Content-Type': 'application/json'
+        }
+        
+        response = requests.post(api_url, json=payload, headers=headers, timeout=30)
+        
+        if response.status_code == 200:
+            data = response.json()
+            logging.info(f"📋 Retrieved Rising Stars data from WordPress database")
+            return data
+        else:
+            logging.warning(f"WordPress API returned status {response.status_code}")
+            return None
+            
+    except Exception as e:
+        logging.error(f"WordPress API error: {e}")
+        return None
+
 def check_rising_stars(book_id, tags, start_index=0):
     """Checks if the book appears in the main and genre-specific Rising Stars lists."""
     results = {}
@@ -1770,9 +1804,9 @@ def api_rising_stars():
     book_url = request.args.get('book_url', '').strip()
     estimate_distance_param = request.args.get('estimate_distance', 'false').lower() == 'true'
     
-    # Logging for debugging
     logging.critical(f"🔍 [{request_id}] Received book_url: {book_url}")
     logging.critical(f"🔍 [{request_id}] Estimate distance: {estimate_distance_param}")
+    logging.critical(f"🔍 [{request_id}] Database mode: {USE_DATABASE}")
 
     # Validate book URL
     if not book_url or "royalroad.com" not in book_url:
@@ -1784,11 +1818,30 @@ def api_rising_stars():
             "request_id": request_id,
             "processing_time": f"{time.time() - start_time:.2f} seconds"
         }), 400
-
-    # Get book details
+    
+    # Try WordPress database first if enabled
+    if USE_DATABASE:
+        wp_result = check_rising_stars_from_wordpress(book_url, estimate_distance_param)
+        if wp_result:
+            # Add processing metadata
+            wp_result['request_id'] = request_id
+            wp_result['processing_time'] = f"{time.time() - start_time:.2f} seconds"
+            wp_result['source'] = 'database'
+            
+            # Ensure proper formatting for technical tags
+            if 'results' in wp_result:
+                technical_separator = find_technical_separator(wp_result['results'])
+                if technical_separator > 0:
+                    wp_result['technical_tags_separator'] = technical_separator
+            
+            return jsonify(wp_result)
+        else:
+            logging.warning(f"WordPress database check failed, falling back to scraping")
+    
+    # Fall back to original scraping logic
     try:
         title, book_id, tags = get_title_and_tags(book_url)
-
+        
         if not book_id or not tags:
             logging.error(f"❌ [{request_id}] Failed to retrieve book details")
             return jsonify({
@@ -1800,7 +1853,7 @@ def api_rising_stars():
             }), 500
     
     except Exception as e:
-        logging.exception(f"❌ [{request_id}] Unexpected error processing book URL: {str(e)}")
+        logging.exception(f"❌ [{request_id}] Unexpected error: {str(e)}")
         return jsonify({
             "error": f"Unexpected error: {str(e)}",
             "request_id": request_id,
@@ -2030,6 +2083,22 @@ def api_rising_stars():
                f"{sum(len(books) for books in discovered_books['genre_rising_stars'].values())} books across {len(discovered_books['genre_rising_stars'])} genre lists")
     
     return jsonify(response_data)
+
+def find_technical_separator(results):
+    """Find where technical tags start in results"""
+    technical_tags = [
+        'AI-Assisted Content', 'AI-Generated Content',
+        'Graphic Violence', 'Profanity', 
+        'Sensitive Content', 'Sexual Content'
+    ]
+    
+    index = 0
+    for tag in results.keys():
+        if tag in technical_tags:
+            return index
+        index += 1
+    
+    return 0
 
 @app.route('/analyze_book', methods=['GET'])
 def analyze_book():
